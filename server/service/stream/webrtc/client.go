@@ -88,9 +88,43 @@ func (c *Client) AddTrack() error {
 	}
 	go startRTCPReader(videoSender)
 
+	// audio track - using Opus codec for audio
+	audioTrack, err := webrtc.NewTrackLocalStaticRTP(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus},
+		"audio",
+		"pion-audio",
+	)
+	if err != nil {
+		log.Errorf("failed to create audio track: %s", err)
+		return err
+	}
+
+	audioPacketizer := rtp.NewPacketizer(
+		1200,
+		98,
+		0x5678DCBA,
+		&codecs.OpusPayloader{},
+		rtp.NewRandomSequencer(),
+		48000, // 48kHz sample rate for Opus
+	)
+	if audioPacketizer == nil {
+		err := errors.New("failed to create audio rtp packetizer")
+		log.Error(err)
+		return err
+	}
+
+	audioSender, err := c.video.AddTrack(audioTrack)
+	if err != nil {
+		log.Errorf("failed to add audio track: %s", err)
+		return err
+	}
+	go startRTCPReader(audioSender)
+
 	track := &Track{
 		videoPacketizer: videoPacketizer,
 		video:           videoTrack,
+		audioPacketizer: audioPacketizer,
+		audio:           audioTrack,
 	}
 	track.updateExtension()
 

@@ -15,6 +15,7 @@ export const H264Webrtc = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoOfferSent = useRef(false);
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
 
@@ -36,7 +37,7 @@ export const H264Webrtc = () => {
         videoOfferSent.current = true;
         const offer = await video.createOffer({
           offerToReceiveVideo: true,
-          offerToReceiveAudio: false
+          offerToReceiveAudio: true
         });
 
         await video.setLocalDescription(offer);
@@ -55,8 +56,10 @@ export const H264Webrtc = () => {
     };
 
     video.ontrack = (event) => {
-      if (videoRef.current && event.track.kind === 'video') {
+      if (event.track.kind === 'video' && videoRef.current) {
         videoRef.current.srcObject = new MediaStream([event.track]);
+      } else if (event.track.kind === 'audio' && audioRef.current) {
+        audioRef.current.srcObject = new MediaStream([event.track]);
       }
     };
 
@@ -70,6 +73,7 @@ export const H264Webrtc = () => {
       };
 
       video.addTransceiver('video', { direction: 'recvonly' });
+      video.addTransceiver('audio', { direction: 'recvonly' });
     };
 
     ws.onmessage = (event) => {
@@ -193,6 +197,12 @@ export const H264Webrtc = () => {
           onPlaying={() => {
             setIsLoading(false);
           }}
+        />
+        <audio
+          ref={audioRef}
+          autoPlay
+          playsInline
+          style={{ display: 'none' }}
         />
       </div>
     </Spin>

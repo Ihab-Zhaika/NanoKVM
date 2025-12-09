@@ -11,6 +11,7 @@ import (
 type WebRTCManager struct {
 	clients      map[*websocket.Conn]*Client
 	videoSending int32
+	audioSending int32
 	mutex        sync.RWMutex
 }
 
@@ -30,6 +31,8 @@ type Track struct {
 	playoutDelayExtensionData []byte
 	videoPacketizer           rtp.Packetizer
 	video                     *webrtc.TrackLocalStaticRTP
+	audioPacketizer           rtp.Packetizer
+	audio                     *webrtc.TrackLocalStaticRTP
 }
 
 type Message struct {

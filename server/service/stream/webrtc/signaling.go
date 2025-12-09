@@ -39,6 +39,7 @@ func (s *SignalingHandler) RegisterCallbacks() {
 	s.client.video.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		if state == webrtc.ICEConnectionStateConnected {
 			manager.StartVideoStream()
+			manager.StartAudioStream()
 		}
 
 		log.Debugf("video connection state changed to %s", state.String())

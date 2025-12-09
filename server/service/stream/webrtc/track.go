@@ -51,3 +51,28 @@ func (t *Track) writeVideo(sample media.Sample) {
 		log.Errorf("failed to write h264 video: %s", err)
 	}
 }
+
+func (t *Track) writeAudioSample(sample media.Sample) error {
+	if t.audio == nil || t.audioPacketizer == nil {
+		return nil
+	}
+
+	samples := uint32(sample.Duration.Seconds() * 48000) // 48kHz for Opus
+	packets := t.audioPacketizer.Packetize(sample.Data, samples)
+
+	for _, p := range packets {
+		if err := t.audio.WriteRTP(p); err != nil {
+			log.Errorf("failed to write audio RTP: %v", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *Track) writeAudio(sample media.Sample) {
+	err := t.writeAudioSample(sample)
+	if err != nil {
+		log.Errorf("failed to write audio: %s", err)
+	}
+}
