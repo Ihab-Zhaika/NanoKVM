@@ -202,6 +202,7 @@ export const H264Webrtc = () => {
           ref={audioRef}
           autoPlay
           playsInline
+          aria-label="Remote PC audio stream"
           style={{ display: 'none' }}
         />
       </div>

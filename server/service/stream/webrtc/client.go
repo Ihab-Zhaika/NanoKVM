@@ -70,7 +70,7 @@ func (c *Client) AddTrack() error {
 	videoPacketizer := rtp.NewPacketizer(
 		1200,
 		100,
-		0x1234ABCD,
+		0x1234ABCD, // SSRC for video track
 		&codecs.H264Payloader{},
 		rtp.NewRandomSequencer(),
 		90000,
@@ -102,7 +102,7 @@ func (c *Client) AddTrack() error {
 	audioPacketizer := rtp.NewPacketizer(
 		1200,
 		98,
-		0x5678DCBA,
+		0x5678DCBA, // SSRC for audio track
 		&codecs.OpusPayloader{},
 		rtp.NewRandomSequencer(),
 		48000, // 48kHz sample rate for Opus

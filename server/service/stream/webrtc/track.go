@@ -54,6 +54,7 @@ func (t *Track) writeVideo(sample media.Sample) {
 
 func (t *Track) writeAudioSample(sample media.Sample) error {
 	if t.audio == nil || t.audioPacketizer == nil {
+		log.Debugf("audio track not initialized, skipping audio sample")
 		return nil
 	}
 
