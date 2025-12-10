@@ -64,7 +64,10 @@ build_server() {
     export GOOS=linux
     export GOARCH=riscv64
     export CC="riscv64-linux-musl-gcc"
-    export CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d"
+    # Use standard RISC-V flags compatible with musl.cc toolchain
+    # Note: T-Head specific flags like -mcpu=c906fdv require T-Head's custom toolchain
+    # The standard musl toolchain uses generic rv64gc architecture
+    export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
     
     # Build the binary with -buildvcs=false to avoid Git VCS stamping issues
     # when running in Docker with mounted volumes

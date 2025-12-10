@@ -15,7 +15,9 @@ ENV CGO_ENABLED=1
 ENV GOOS=linux
 ENV GOARCH=riscv64
 ENV CC=riscv64-linux-musl-gcc
-ENV CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d"
+# Use standard RISC-V flags compatible with musl.cc toolchain
+# Note: T-Head specific flags like -mcpu=c906fdv require T-Head's custom toolchain
+ENV CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
 
 # Go and Node versions
 ENV GO_VERSION=1.22.5

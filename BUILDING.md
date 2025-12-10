@@ -203,10 +203,12 @@ export CGO_ENABLED=1
 export GOOS=linux
 export GOARCH=riscv64
 export CC="riscv64-linux-musl-gcc"  # or riscv64-unknown-linux-musl-gcc
-export CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d"
+# Use standard RISC-V flags compatible with musl.cc toolchain
+# Note: T-Head specific flags like -mcpu=c906fdv require T-Head's custom toolchain
+export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
 
 # Build
-go build -o NanoKVM-Server -v
+go build -buildvcs=false -o NanoKVM-Server -v
 
 # Patch RPATH for dynamic library loading
 patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
