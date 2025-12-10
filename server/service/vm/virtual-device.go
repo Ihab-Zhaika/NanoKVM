@@ -222,6 +222,14 @@ func (s *Service) SetVirtualAudio(c *gin.Context) {
 		return
 	}
 
+	h := hid.GetHid()
+	h.Lock()
+	h.CloseNoLock()
+	defer func() {
+		h.OpenNoLock()
+		h.Unlock()
+	}()
+
 	if req.Enabled {
 		// Enable audio feature by creating marker file
 		file, err := os.Create(virtualAudioFile)
@@ -232,10 +240,29 @@ func (s *Service) SetVirtualAudio(c *gin.Context) {
 		}
 		file.Close()
 	} else {
-		// Disable audio feature - remove all audio marker files
-		_ = os.Remove(virtualAudioFile)
-		_ = os.Remove(virtualAudioIn)
-		_ = os.Remove(virtualAudioOut)
+		// Disable audio feature - unmount devices if mounted and remove marker files
+		audioInMounted, _ := isDeviceExist(virtualAudioIn)
+		audioOutMounted, _ := isDeviceExist(virtualAudioOut)
+
+		// Unmount audio devices if they are mounted
+		if audioInMounted || audioOutMounted {
+			for _, command := range unmountAudioInCommands {
+				_ = exec.Command("sh", "-c", command).Run()
+			}
+			for _, command := range unmountAudioOutCommands {
+				_ = exec.Command("sh", "-c", command).Run()
+			}
+		}
+
+		if err := os.Remove(virtualAudioFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Warnf("failed to remove audio file: %s", err)
+		}
+		if err := os.Remove(virtualAudioIn); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Warnf("failed to remove audio_in file: %s", err)
+		}
+		if err := os.Remove(virtualAudioOut); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Warnf("failed to remove audio_out file: %s", err)
+		}
 	}
 
 	enabled, _ := isDeviceExist(virtualAudioFile)
