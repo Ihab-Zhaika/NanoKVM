@@ -1,0 +1,82 @@
+name: Build NanoKVM preview artifacts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build frontend and tools
+    runs-on: ubuntu-latest
+    env:
+      KVMAPP_WEB_PATH: server/web
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install RISC-V toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-riscv64-linux-gnu
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: web
+        run: pnpm build
+
+      - name: Build EDID update utility
+        working-directory: tools/nanokvm_update_edid
+        run: |
+          make clean
+          make
+
+      - name: Assemble artifacts
+        run: |
+          mkdir -p output
+          KVMAPP_ROOT=output/kvmapp
+          WEB_SUBDIR=${KVMAPP_WEB_PATH:-server/web}
+          WEB_ROOT="$KVMAPP_ROOT/$WEB_SUBDIR"
+          mkdir -p "$KVMAPP_ROOT"
+          cp -r kvmapp/. "$KVMAPP_ROOT"
+          mkdir -p "$WEB_ROOT"
+          echo "Packaging web assets into $WEB_ROOT"
+          cp -r web/dist/. "$WEB_ROOT"
+          mkdir -p output/tools
+          cp tools/nanokvm_update_edid/nanokvm_update_edid output/tools/
+          tar -czf nanokvm-artifacts.tar.gz -C output .
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanokvm-build-${{ github.sha }}
+          path: |
+            nanokvm-artifacts.tar.gz
+            web/dist
+            tools/nanokvm_update_edid/nanokvm_update_edid
+          if-no-files-found: error
