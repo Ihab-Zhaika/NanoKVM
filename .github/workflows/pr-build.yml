@@ -212,7 +212,7 @@ jobs:
             dosfstools
 
       - name: Download kvmapp artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.8
         with:
           name: nanokvm-kvmapp-${{ github.sha }}
           path: ./artifacts
