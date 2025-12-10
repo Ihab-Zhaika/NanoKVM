@@ -21,8 +21,6 @@ permissions:
   contents: read
 
 env:
-  # RISC-V musl toolchain for Go cross-compilation
-  MUSL_TOOLCHAIN_URL: https://musl.cc/riscv64-linux-musl-cross.tgz
   # Base NanoKVM OS image for creating flashable images
   BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
   # Go version for building the server
