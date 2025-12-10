@@ -72,25 +72,43 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build with Docker container
+      - name: Determine Docker image
+        id: docker-image
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          WORKFLOW_IMAGE: ${{ needs.docker-image.outputs.image }}
         run: |
-          IMAGE="${{ needs.docker-image.outputs.image }}"
-          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
-            echo "ERROR: Invalid Docker image reference: '$IMAGE'"
-            echo "This usually means ACR_REGISTRY secret is not configured."
-            echo "Please ensure the following secrets are set in repository settings:"
+          # First try to use the output from docker-image job
+          if [ -n "$WORKFLOW_IMAGE" ] && [ "$WORKFLOW_IMAGE" != "/:latest" ] && [ "$WORKFLOW_IMAGE" != "/nanokvm-builder:latest" ]; then
+            echo "Using image from docker-image workflow: $WORKFLOW_IMAGE"
+            echo "image=${WORKFLOW_IMAGE}" >> $GITHUB_OUTPUT
+          # Otherwise construct the image name directly
+          elif [ -n "$ACR_REGISTRY" ]; then
+            IMAGE="${ACR_REGISTRY}/nanokvm-builder:latest"
+            echo "Constructed image name: $IMAGE"
+            echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: Cannot determine Docker image."
+            echo "Neither workflow output nor ACR_REGISTRY secret is available."
+            echo ""
+            echo "Please ensure these secrets are set in repository settings:"
             echo "  - ACR_REGISTRY: Your Azure Container Registry URL (e.g., myregistry.azurecr.io)"
             echo "  - ACR_USERNAME: Registry username"
             echo "  - ACR_PASSWORD: Registry password"
             exit 1
           fi
-          echo "Using Docker image: $IMAGE"
+
+      - name: Build with Docker container
+        env:
+          DOCKER_IMAGE: ${{ steps.docker-image.outputs.image }}
+        run: |
+          echo "Using Docker image: $DOCKER_IMAGE"
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -v "${{ github.workspace }}/output:/workspace/output" \
             -e WORKSPACE=/workspace \
             -e OUTPUT_DIR=/workspace/output \
-            "$IMAGE" \
+            "$DOCKER_IMAGE" \
             build-nanokvm
 
       - name: List build artifacts
