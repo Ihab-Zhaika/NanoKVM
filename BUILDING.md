@@ -290,8 +290,8 @@ git submodule update --init --recursive --depth=1
 ### Modifying an Existing Image
 
 ```bash
-# Download base image
-curl -L -o base.img.xz https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
+# Download the latest base image (v1.4.0 - February 2025)
+curl -L -o base.img.xz https://github.com/sipeed/NanoKVM/releases/download/v1.4.0/20250217_NanoKVM_Rev1_4_0.img.xz
 xz -d base.img.xz
 
 # Mount rootfs (partition 2)
@@ -310,6 +310,19 @@ sudo losetup -d "$LOOP_DEV"
 # Compress final image
 xz -9 base.img
 ```
+
+### Available Base Images
+
+The workflow uses the latest official NanoKVM base image. Available versions:
+
+| Version | Release Date | File | Notes |
+|---------|--------------|------|-------|
+| v1.4.0 | 2025-02-17 | `20250217_NanoKVM_Rev1_4_0.img.xz` | **Latest - Recommended** |
+| v1.3.0 | 2024-11-20 | `20241120_NanoKVM_Rev1_3_0.img.xz` | PCIe support, H264 1080P@60fps |
+| v1.2.1 | 2024-08-20 | `20240820_NanoKVM_Rev1_2_1.img.xz` | Ethernet fix |
+| v1.0.0 | 2024-07-02 | `20240702_NanoKVM_Rev1_0_0.img.xz` | Initial release |
+
+Check [Sipeed NanoKVM Releases](https://github.com/sipeed/NanoKVM/releases) for the latest images.
 
 ## Flashing the OS Image
 

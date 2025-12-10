@@ -26,8 +26,9 @@ permissions:
   contents: read
 
 env:
-  # Base NanoKVM OS image for creating flashable images
-  BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
+  # Base NanoKVM OS image for creating flashable images (v1.4.0 - February 2025)
+  # This is the latest official base image from https://github.com/sipeed/NanoKVM/releases
+  BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/v1.4.0/20250217_NanoKVM_Rev1_4_0.img.xz
   # Azure Storage configuration
   AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
   # RISC-V musl toolchain URL (with fallbacks)
