@@ -29,7 +29,19 @@ Build artifacts will be in the `output/` directory.
 
 ## CI/CD Build (GitHub Actions)
 
-The repository includes a GitHub Actions workflow that automatically builds using Docker and Azure Container Registry.
+The repository includes GitHub Actions workflows that automatically build using Docker and Azure Container Registry.
+
+### Workflows
+
+1. **docker-build.yml** - Builds and pushes the Docker build environment image to ACR
+   - Triggered on changes to `Dockerfile` or `docker-build.sh`
+   - Can be triggered manually or called by other workflows
+   - Caches Docker layers for faster builds
+
+2. **pr-build.yml** - Main build workflow for NanoKVM
+   - Calls `docker-build.yml` to ensure Docker image is available
+   - Uses the Docker image to build all NanoKVM components
+   - Optionally creates flashable OS images
 
 ### Build Artifacts
 
@@ -72,6 +84,13 @@ To build a flashable OS image:
 4. Click "Run workflow"
 
 To force rebuild the Docker image:
+
+1. Go to Actions → "Build Docker Image"
+2. Click "Run workflow"
+3. Check "Force rebuild Docker image"
+4. Click "Run workflow"
+
+Or via the main build workflow:
 
 1. Go to Actions → "Build NanoKVM preview artifacts"
 2. Click "Run workflow"

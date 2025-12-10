@@ -34,60 +34,17 @@ env:
   BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
 
 jobs:
-  # Build and push Docker image to Azure Container Registry
+  # Build Docker image using the reusable workflow
   docker-image:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.image-info.outputs.image }}
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Login to Azure Container Registry
-        uses: azure/docker-login@v2
-        with:
-          login-server: ${{ secrets.ACR_REGISTRY }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Generate image metadata
-        id: image-info
-        run: |
-          IMAGE="${ACR_REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
-          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
-          echo "Image: ${IMAGE}"
-
-      - name: Check if image exists
-        id: check-image
-        run: |
-          IMAGE="${ACR_REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
-          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Image already exists in registry"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Image not found in registry, will build"
-          fi
-
-      - name: Build and push Docker image
-        if: steps.check-image.outputs.exists != 'true' || github.event.inputs.rebuild_docker == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ env.ACR_IMAGE_TAG }}
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ github.sha }}
-          build-args: |
-            TOOLCHAIN_URL=${{ secrets.TOOLCHAIN_URL }}
-          cache-from: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache,mode=max
+    name: Docker Image
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      force_rebuild: ${{ github.event.inputs.rebuild_docker == 'true' }}
+    secrets:
+      ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+      TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
 
   # Build NanoKVM using Docker container
   build:

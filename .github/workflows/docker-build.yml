@@ -1,0 +1,118 @@
+name: Build Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'docker-build.sh'
+      - '.github/workflows/docker-build.yml'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild Docker image (ignore cache)'
+        required: false
+        default: false
+        type: boolean
+  # Allow this workflow to be called by other workflows
+  workflow_call:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild Docker image'
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      image:
+        description: 'Full Docker image name with tag'
+        value: ${{ jobs.build-docker.outputs.image }}
+      image_tag:
+        description: 'Docker image tag'
+        value: ${{ jobs.build-docker.outputs.tag }}
+    secrets:
+      ACR_REGISTRY:
+        required: true
+      ACR_USERNAME:
+        required: true
+      ACR_PASSWORD:
+        required: true
+      TOOLCHAIN_URL:
+        required: false
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ACR_IMAGE_NAME: nanokvm-builder
+  ACR_IMAGE_TAG: latest
+
+jobs:
+  build-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image-info.outputs.image }}
+      tag: ${{ steps.image-info.outputs.tag }}
+      exists: ${{ steps.check-image.outputs.exists }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        id: image-info
+        run: |
+          REGISTRY="${{ secrets.ACR_REGISTRY }}"
+          IMAGE="${REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "tag=${ACR_IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
+          echo "Image: ${IMAGE}"
+
+      - name: Check if image exists in registry
+        id: check-image
+        run: |
+          IMAGE="${{ steps.image-info.outputs.image }}"
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Image already exists in registry: $IMAGE"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image not found in registry, will build: $IMAGE"
+          fi
+
+      - name: Build and push Docker image
+        if: steps.check-image.outputs.exists != 'true' || inputs.force_rebuild == true
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ env.ACR_IMAGE_TAG }}
+            ${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            TOOLCHAIN_URL=${{ secrets.TOOLCHAIN_URL }}
+          cache-from: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Verify image is available
+        run: |
+          echo "Verifying image is available..."
+          docker pull "${{ steps.image-info.outputs.image }}"
+          echo "Image verification successful"
