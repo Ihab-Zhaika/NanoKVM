@@ -53,6 +53,7 @@ jobs:
           
           # List of mirror URLs to try (primary and fallbacks)
           URLS=(
+            "https://coder8479845829.blob.core.windows.net/kvm/riscv64-linux-musl-cross.tgz?sp=r&st=2025-12-10T18:03:48Z&se=2026-12-11T02:18:48Z&sv=2024-11-04&sr=b&sig=2JBmQXVoJrrecVjyXok2N5L45%2FgU5EYMmBjg52q42ho%3D"
             "https://musl.cc/riscv64-linux-musl-cross.tgz"
             "https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz"
           )
