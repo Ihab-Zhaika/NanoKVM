@@ -101,13 +101,18 @@ jobs:
 
       - name: Extract build artifacts
         run: |
+          set -euo pipefail
           ARTIFACT_ARCHIVE=artifacts/nanokvm-artifacts.tar.gz
           if [ ! -f "$ARTIFACT_ARCHIVE" ]; then
             echo "Artifact archive missing: $ARTIFACT_ARCHIVE"
             exit 1
           fi
           find artifacts -mindepth 1 -maxdepth 1 ! -name "$(basename "$ARTIFACT_ARCHIVE")" -exec rm -rf {} +
-          tar --overwrite --recursive-unlink -xzf "$ARTIFACT_ARCHIVE" -C artifacts
+          tar --overwrite --recursive-unlink --delay-directory-restore -xzf "$ARTIFACT_ARCHIVE" -C artifacts
+          if [ ! -d artifacts/kvmapp ] || [ ! -f artifacts/tools/nanokvm_update_edid/nanokvm_update_edid ]; then
+            echo "Extracted artifacts missing expected content"
+            exit 1
+          fi
 
       - name: Download latest base OS image
         env:
