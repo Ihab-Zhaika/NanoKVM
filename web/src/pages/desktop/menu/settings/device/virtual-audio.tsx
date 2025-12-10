@@ -29,16 +29,20 @@ export const VirtualAudio = () => {
     if (loading) return;
     setLoading('enabled');
 
-    api
-      .setVirtualAudio(!isEnabled)
+    const func = isEnabled ? api.disableVirtualAudio() : api.enableVirtualAudio();
+
+    func
       .then((rsp) => {
         if (rsp.code !== 0) {
           return;
         }
 
-        setIsEnabled(rsp.data.enabled);
-        setIsAudioInOn(rsp.data.audioIn);
-        setIsAudioOutOn(rsp.data.audioOut);
+        setIsEnabled(!isEnabled);
+        if (isEnabled) {
+          // When disabling, also reset the sub-device states
+          setIsAudioInOn(false);
+          setIsAudioOutOn(false);
+        }
       })
       .finally(() => {
         setLoading('');

@@ -213,14 +213,24 @@ func isDeviceExist(device string) (bool, error) {
 	return false, err
 }
 
-func (s *Service) SetVirtualAudio(c *gin.Context) {
-	var req proto.SetVirtualAudioReq
+func (s *Service) EnableVirtualAudio(c *gin.Context) {
 	var rsp proto.Response
 
-	if err := proto.ParseFormRequest(c, &req); err != nil {
-		rsp.ErrRsp(c, -1, "invalid argument")
+	// Enable audio feature by creating marker file
+	file, err := os.Create(virtualAudioFile)
+	if err != nil {
+		log.Errorf("failed to create audio file: %s", err)
+		rsp.ErrRsp(c, -1, "failed to enable virtual audio")
 		return
 	}
+	file.Close()
+
+	rsp.OkRsp(c)
+	log.Debug("enable virtual audio")
+}
+
+func (s *Service) DisableVirtualAudio(c *gin.Context) {
+	var rsp proto.Response
 
 	h := hid.GetHid()
 	h.Lock()
@@ -230,50 +240,30 @@ func (s *Service) SetVirtualAudio(c *gin.Context) {
 		h.Unlock()
 	}()
 
-	if req.Enabled {
-		// Enable audio feature by creating marker file
-		file, err := os.Create(virtualAudioFile)
-		if err != nil {
-			log.Errorf("failed to create audio file: %s", err)
-			rsp.ErrRsp(c, -2, "operation failed")
-			return
-		}
-		file.Close()
-	} else {
-		// Disable audio feature - unmount devices if mounted and remove marker files
-		audioInMounted, _ := isDeviceExist(virtualAudioIn)
-		audioOutMounted, _ := isDeviceExist(virtualAudioOut)
+	// Disable audio feature - unmount devices if mounted and remove marker files
+	audioInMounted, _ := isDeviceExist(virtualAudioIn)
+	audioOutMounted, _ := isDeviceExist(virtualAudioOut)
 
-		// Unmount audio devices if they are mounted
-		if audioInMounted || audioOutMounted {
-			for _, command := range unmountAudioInCommands {
-				_ = exec.Command("sh", "-c", command).Run()
-			}
-			for _, command := range unmountAudioOutCommands {
-				_ = exec.Command("sh", "-c", command).Run()
-			}
+	// Unmount audio devices if they are mounted
+	if audioInMounted || audioOutMounted {
+		for _, command := range unmountAudioInCommands {
+			_ = exec.Command("sh", "-c", command).Run()
 		}
-
-		if err := os.Remove(virtualAudioFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Warnf("failed to remove audio file: %s", err)
-		}
-		if err := os.Remove(virtualAudioIn); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Warnf("failed to remove audio_in file: %s", err)
-		}
-		if err := os.Remove(virtualAudioOut); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Warnf("failed to remove audio_out file: %s", err)
+		for _, command := range unmountAudioOutCommands {
+			_ = exec.Command("sh", "-c", command).Run()
 		}
 	}
 
-	enabled, _ := isDeviceExist(virtualAudioFile)
-	audioIn, _ := isDeviceExist(virtualAudioIn)
-	audioOut, _ := isDeviceExist(virtualAudioOut)
+	if err := os.Remove(virtualAudioFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio file: %s", err)
+	}
+	if err := os.Remove(virtualAudioIn); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio_in file: %s", err)
+	}
+	if err := os.Remove(virtualAudioOut); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio_out file: %s", err)
+	}
 
-	rsp.OkRspWithData(c, &proto.SetVirtualAudioRsp{
-		Enabled:  enabled,
-		AudioIn:  audioIn,
-		AudioOut: audioOut,
-	})
-
-	log.Debugf("set virtual audio enabled=%v success", req.Enabled)
+	rsp.OkRsp(c)
+	log.Debug("disable virtual audio")
 }

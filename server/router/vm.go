@@ -28,7 +28,8 @@ func vmRouter(r *gin.Engine) {
 
 	api.GET("/vm/device/virtual", service.GetVirtualDevice)     // get virtual device
 	api.POST("/vm/device/virtual", service.UpdateVirtualDevice) // update virtual device
-	api.POST("/vm/device/virtual/audio", service.SetVirtualAudio) // enable/disable virtual audio feature
+	api.POST("/vm/device/virtual/audio/enable", service.EnableVirtualAudio)   // enable virtual audio
+	api.POST("/vm/device/virtual/audio/disable", service.DisableVirtualAudio) // disable virtual audio
 
 	api.GET("/vm/memory/limit", service.GetMemoryLimit)  // get memory limit
 	api.POST("/vm/memory/limit", service.SetMemoryLimit) // set memory limit

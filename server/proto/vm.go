@@ -144,13 +144,3 @@ type GetWebTitleRsp struct {
 type SetTlsReq struct {
 	Enabled bool `validate:"omitempty"`
 }
-
-type SetVirtualAudioReq struct {
-	Enabled bool `validate:"omitempty"`
-}
-
-type SetVirtualAudioRsp struct {
-	Enabled  bool `json:"enabled"`
-	AudioIn  bool `json:"audioIn"`
-	AudioOut bool `json:"audioOut"`
-}
