@@ -188,6 +188,6 @@ main() {
 }
 
 # Run if called directly
-if [ "${BASH_SOURCE[0]}" == "${0}" ]; then
+if [ "$(basename "$0")" = "docker-build.sh" ] || [ "$(basename "$0")" = "build-nanokvm" ]; then
     main "$@"
 fi

@@ -54,18 +54,18 @@ ENV PATH="${GOPATH}/bin:${PATH}"
 
 # Download and install RISC-V musl toolchain
 # Using multiple mirrors for reliability
+ARG TOOLCHAIN_URL=""
 RUN mkdir -p /opt/toolchain && cd /opt/toolchain && \
-    ( \
-        curl -fsSL --connect-timeout 30 --max-time 300 \
-            "https://coder8479845829.blob.core.windows.net/kvm/riscv64-linux-musl-cross.tgz?sp=r&st=2025-12-10T18:03:48Z&se=2026-12-11T02:18:48Z&sv=2024-11-04&sr=b&sig=2JBmQXVoJrrecVjyXok2N5L45%2FgU5EYMmBjg52q42ho%3D" \
-            -o toolchain.tgz || \
+    if [ -n "$TOOLCHAIN_URL" ]; then \
+        curl -fsSL --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o toolchain.tgz; \
+    else \
         curl -fsSL --connect-timeout 30 --max-time 300 \
             "https://musl.cc/riscv64-linux-musl-cross.tgz" \
             -o toolchain.tgz || \
         curl -fsSL --connect-timeout 30 --max-time 300 \
             "https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz" \
-            -o toolchain.tgz \
-    ) && \
+            -o toolchain.tgz; \
+    fi && \
     tar xzf toolchain.tgz && \
     rm toolchain.tgz
 

@@ -60,6 +60,7 @@ The CI workflow uses Azure Container Registry (ACR) to store and cache the Docke
    - `ACR_REGISTRY`: `<acr-name>.azurecr.io`
    - `ACR_USERNAME`: Admin username or service principal ID
    - `ACR_PASSWORD`: Admin password or service principal secret
+   - `TOOLCHAIN_URL` (optional): Custom URL for RISC-V musl toolchain (e.g., Azure blob storage URL with SAS token)
 
 ### Manual Workflow Triggers
 
@@ -105,7 +106,7 @@ docker-compose run --rm shell
 - Linux x86-64 (Ubuntu 22.04+ recommended)
 - Node.js 20+
 - pnpm 9+
-- Go 1.22+
+- Go 1.22.5+
 - RISC-V cross-compiler toolchain
 
 #### Installing the RISC-V Toolchain
