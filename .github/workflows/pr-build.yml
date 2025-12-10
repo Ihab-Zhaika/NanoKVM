@@ -67,12 +67,23 @@ jobs:
 
       - name: Build with Docker container
         run: |
+          IMAGE="${{ needs.docker-image.outputs.image }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
+            echo "ERROR: Invalid Docker image reference: '$IMAGE'"
+            echo "This usually means ACR_REGISTRY secret is not configured."
+            echo "Please ensure the following secrets are set in repository settings:"
+            echo "  - ACR_REGISTRY: Your Azure Container Registry URL (e.g., myregistry.azurecr.io)"
+            echo "  - ACR_USERNAME: Registry username"
+            echo "  - ACR_PASSWORD: Registry password"
+            exit 1
+          fi
+          echo "Using Docker image: $IMAGE"
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -v "${{ github.workspace }}/output:/workspace/output" \
             -e WORKSPACE=/workspace \
             -e OUTPUT_DIR=/workspace/output \
-            "${{ needs.docker-image.outputs.image }}" \
+            "$IMAGE" \
             build-nanokvm
 
       - name: List build artifacts

@@ -59,8 +59,6 @@ jobs:
       image: ${{ steps.image-info.outputs.image }}
       tag: ${{ steps.image-info.outputs.tag }}
       exists: ${{ steps.check-image.outputs.exists }}
-    env:
-      REGISTRY: ${{ secrets.ACR_REGISTRY }}
 
     steps:
       - name: Checkout repository
@@ -78,7 +76,13 @@ jobs:
 
       - name: Generate image metadata
         id: image-info
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
         run: |
+          if [ -z "$REGISTRY" ]; then
+            echo "ERROR: ACR_REGISTRY secret is not set"
+            exit 1
+          fi
           IMAGE="${REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
           echo "tag=${ACR_IMAGE_TAG}" >> $GITHUB_OUTPUT
@@ -89,6 +93,11 @@ jobs:
         id: check-image
         run: |
           IMAGE="${{ steps.image-info.outputs.image }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
+            echo "ERROR: Invalid image reference: $IMAGE"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
             echo "Image already exists in registry: $IMAGE"
@@ -114,6 +123,11 @@ jobs:
 
       - name: Verify image is available
         run: |
+          IMAGE="${{ steps.image-info.outputs.image }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
+            echo "ERROR: Invalid image reference, cannot verify"
+            exit 1
+          fi
           echo "Verifying image is available..."
-          docker pull "${{ steps.image-info.outputs.image }}"
+          docker pull "$IMAGE"
           echo "Image verification successful"
