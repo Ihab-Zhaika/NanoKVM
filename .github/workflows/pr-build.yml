@@ -17,6 +17,8 @@ jobs:
   build:
     name: Build frontend and tools
     runs-on: ubuntu-latest
+    env:
+      KVMAPP_WEB_PATH: server/web
 
     steps:
       - name: Checkout repository
@@ -58,7 +60,8 @@ jobs:
         run: |
           mkdir -p output
           KVMAPP_ROOT=output/kvmapp
-          WEB_ROOT="$KVMAPP_ROOT/server/web"
+          WEB_SUBDIR=${KVMAPP_WEB_PATH:-server/web}
+          WEB_ROOT="$KVMAPP_ROOT/$WEB_SUBDIR"
           mkdir -p "$KVMAPP_ROOT"
           cp -r kvmapp/. "$KVMAPP_ROOT"
           mkdir -p "$WEB_ROOT"
