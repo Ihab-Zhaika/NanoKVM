@@ -101,7 +101,7 @@ jobs:
 
       - name: Extract build artifacts
         run: |
-          tar -xzf artifacts/nanokvm-artifacts.tar.gz -C artifacts
+          tar --overwrite -xzf artifacts/nanokvm-artifacts.tar.gz -C artifacts
 
       - name: Download latest base OS image
         env:
