@@ -49,9 +49,16 @@ To build a flashable OS image:
 #### Option 1: Using musl.cc pre-built toolchain (recommended for Go)
 
 ```bash
-curl -L https://musl.cc/riscv64-linux-musl-cross.tgz | tar xz
+# Primary mirror
+curl -fSL https://musl.cc/riscv64-linux-musl-cross.tgz | tar xz
+
+# Alternative mirror (if primary is unavailable)
+# curl -fSL https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz | tar xz
+
 export PATH="$PWD/riscv64-linux-musl-cross/bin:$PATH"
 ```
+
+> **Note**: The musl.cc server can occasionally be slow or unavailable. The CI workflow includes retry logic and fallback mirrors to handle this.
 
 #### Option 2: Using Sophgo toolchain
 

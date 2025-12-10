@@ -52,8 +52,60 @@ jobs:
       - name: Download and setup RISC-V musl toolchain
         run: |
           echo "Downloading RISC-V musl cross-compiler toolchain..."
-          curl -L "$MUSL_TOOLCHAIN_URL" | tar xz
-          echo "$PWD/riscv64-linux-musl-cross/bin" >> $GITHUB_PATH
+          
+          # List of mirror URLs to try (primary and fallbacks)
+          URLS=(
+            "https://musl.cc/riscv64-linux-musl-cross.tgz"
+            "https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz"
+          )
+          
+          download_toolchain() {
+            local url="$1"
+            local max_retries=3
+            local retry_delay=10
+            local i=1
+            
+            while [ $i -le $max_retries ]; do
+              echo "Attempt $i/$max_retries: Downloading from $url"
+              if curl -fSL --connect-timeout 30 --max-time 300 -o toolchain.tgz "$url"; then
+                echo "Download successful, extracting..."
+                if tar xzf toolchain.tgz; then
+                  rm toolchain.tgz
+                  return 0
+                else
+                  echo "Extraction failed"
+                  rm -f toolchain.tgz
+                fi
+              else
+                echo "Download failed"
+              fi
+              
+              if [ $i -lt $max_retries ]; then
+                echo "Waiting ${retry_delay}s before retry..."
+                sleep $retry_delay
+                retry_delay=$((retry_delay * 2))
+              fi
+              i=$((i + 1))
+            done
+            return 1
+          }
+          
+          # Try each URL until one succeeds
+          for url in "${URLS[@]}"; do
+            if download_toolchain "$url"; then
+              echo "Toolchain ready from: $url"
+              break
+            fi
+            echo "All retries failed for $url, trying next mirror..."
+          done
+          
+          # Verify toolchain was downloaded and contains expected files
+          if [ ! -x "riscv64-linux-musl-cross/bin/riscv64-linux-musl-gcc" ]; then
+            echo "ERROR: Failed to download toolchain from all mirrors or toolchain is incomplete"
+            exit 1
+          fi
+          
+          echo "$PWD/riscv64-linux-musl-cross/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchains
         run: |
