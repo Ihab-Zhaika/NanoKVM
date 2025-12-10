@@ -12,12 +12,24 @@ NanoKVM consists of several components:
 - **EDID Utility** - Tool for updating EDID settings
 - **OS Image** - Complete flashable SD card image
 
+## Quick Start with Docker (Recommended)
+
+The easiest way to build NanoKVM is using the provided Docker image:
+
+```bash
+# Build using docker-compose
+docker-compose run --rm build
+
+# Or manually with docker
+docker build -t nanokvm-builder .
+docker run --rm -v "$(pwd):/workspace" -v "$(pwd)/output:/workspace/output" nanokvm-builder build-nanokvm
+```
+
+Build artifacts will be in the `output/` directory.
+
 ## CI/CD Build (GitHub Actions)
 
-The repository includes a GitHub Actions workflow that automatically builds:
-
-1. **On every PR and push to main**: Frontend, Go server, and EDID utility
-2. **On manual trigger**: All of the above plus a flashable OS image
+The repository includes a GitHub Actions workflow that automatically builds using Docker and Azure Container Registry.
 
 ### Build Artifacts
 
@@ -25,7 +37,31 @@ The repository includes a GitHub Actions workflow that automatically builds:
 - `nanokvm-build-{sha}` - All build artifacts
 - `nanokvm-os-image-{sha}` - Flashable SD card image (manual trigger only)
 
-### Manual OS Image Build
+### Azure Container Registry Setup
+
+The CI workflow uses Azure Container Registry (ACR) to store and cache the Docker build image. To configure:
+
+1. **Create an Azure Container Registry**:
+   ```bash
+   az acr create --resource-group <rg-name> --name <acr-name> --sku Basic
+   ```
+
+2. **Enable admin access** (or use service principal):
+   ```bash
+   az acr update --name <acr-name> --admin-enabled true
+   ```
+
+3. **Get credentials**:
+   ```bash
+   az acr credential show --name <acr-name>
+   ```
+
+4. **Add GitHub Secrets**:
+   - `ACR_REGISTRY`: `<acr-name>.azurecr.io`
+   - `ACR_USERNAME`: Admin username or service principal ID
+   - `ACR_PASSWORD`: Admin password or service principal secret
+
+### Manual Workflow Triggers
 
 To build a flashable OS image:
 
@@ -34,19 +70,47 @@ To build a flashable OS image:
 3. Check "Build flashable OS image"
 4. Click "Run workflow"
 
+To force rebuild the Docker image:
+
+1. Go to Actions → "Build NanoKVM preview artifacts"
+2. Click "Run workflow"
+3. Check "Force rebuild Docker image"
+4. Click "Run workflow"
+
 ## Local Development Build
 
-### Prerequisites
+### Option 1: Using Docker (Recommended)
+
+```bash
+# Build the Docker image
+docker build -t nanokvm-builder .
+
+# Run the build
+docker run --rm \
+  -v "$(pwd):/workspace" \
+  -v "$(pwd)/output:/workspace/output" \
+  nanokvm-builder build-nanokvm
+
+# Or use docker-compose
+docker-compose run --rm build
+
+# For interactive debugging
+docker-compose run --rm shell
+```
+
+### Option 2: Manual Build
+
+#### Prerequisites
 
 - Linux x86-64 (Ubuntu 22.04+ recommended)
 - Node.js 20+
 - pnpm 9+
-- Go 1.24+
+- Go 1.22+
 - RISC-V cross-compiler toolchain
 
-### Installing the RISC-V Toolchain
+#### Installing the RISC-V Toolchain
 
-#### Option 1: Using musl.cc pre-built toolchain (recommended for Go)
+**Option A: Using musl.cc pre-built toolchain (recommended for Go)**
 
 ```bash
 # Primary mirror
@@ -60,7 +124,7 @@ export PATH="$PWD/riscv64-linux-musl-cross/bin:$PATH"
 
 > **Note**: The musl.cc server can occasionally be slow or unavailable. The CI workflow includes retry logic and fallback mirrors to handle this.
 
-#### Option 2: Using Sophgo toolchain
+**Option B: Using Sophgo toolchain**
 
 ```bash
 # Download from Sophgo
@@ -68,13 +132,13 @@ curl -L https://sophon-file.sophon.cn/sophon-prod-s3/drive/23/03/07/16/host-tool
 export PATH="$PWD/host-tools/gcc/riscv64-linux-musl-x86_64/bin:$PATH"
 ```
 
-#### Option 3: Using system package (for EDID utility only)
+**Option C: Using system package (for EDID utility only)**
 
 ```bash
 sudo apt-get install gcc-riscv64-linux-gnu
 ```
 
-### Building the Frontend
+#### Building the Frontend
 
 ```bash
 cd web
@@ -83,7 +147,7 @@ pnpm build
 # Output: web/dist/
 ```
 
-### Building the Go Server
+#### Building the Go Server
 
 ```bash
 cd server
@@ -102,7 +166,7 @@ go build -o NanoKVM-Server -v
 patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
 ```
 
-### Building the EDID Utility
+#### Building the EDID Utility
 
 ```bash
 cd tools/nanokvm_update_edid
@@ -111,7 +175,7 @@ make
 # Output: nanokvm_update_edid
 ```
 
-### Building kvm_system (requires MaixCDK)
+#### Building kvm_system (requires MaixCDK)
 
 The `kvm_system` component requires the MaixCDK framework. See [support/sg2002/README.md](support/sg2002/README.md) for detailed instructions.
 
@@ -258,9 +322,18 @@ Install required tools:
 sudo apt-get install kpartx parted e2fsprogs
 ```
 
+### Docker Build Fails
+
+If the Docker build fails due to toolchain download issues:
+```bash
+# Rebuild with no cache
+docker build --no-cache -t nanokvm-builder .
+```
+
 ## References
 
 - [NanoKVM Wiki](https://wiki.sipeed.com/nanokvm)
 - [MaixCDK Documentation](https://github.com/sipeed/MaixCDK)
 - [LicheeSG-Nano-Build](https://github.com/scpcom/LicheeSG-Nano-Build)
 - [Sipeed LicheeRV-Nano-Build](https://github.com/sipeed/LicheeRV-Nano-Build)
+- [Azure Container Registry Documentation](https://docs.microsoft.com/en-us/azure/container-registry/)

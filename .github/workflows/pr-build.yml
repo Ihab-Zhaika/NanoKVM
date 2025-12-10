@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      rebuild_docker:
+        description: 'Force rebuild Docker image (skip cache)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -21,14 +26,71 @@ permissions:
   contents: read
 
 env:
+  # Azure Container Registry configuration
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+  ACR_IMAGE_NAME: nanokvm-builder
+  ACR_IMAGE_TAG: latest
   # Base NanoKVM OS image for creating flashable images
   BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
-  # Go version for building the server
-  GO_VERSION: '1.24'
 
 jobs:
+  # Build and push Docker image to Azure Container Registry
+  docker-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image-info.outputs.image }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        id: image-info
+        run: |
+          IMAGE="${ACR_REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "Image: ${IMAGE}"
+
+      - name: Check if image exists
+        id: check-image
+        run: |
+          IMAGE="${ACR_REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Image already exists in registry"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image not found in registry, will build"
+          fi
+
+      - name: Build and push Docker image
+        if: steps.check-image.outputs.exists != 'true' || github.event.inputs.rebuild_docker == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ env.ACR_IMAGE_TAG }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache,mode=max
+
+  # Build NanoKVM using Docker container
   build:
     name: Build NanoKVM components
+    needs: docker-image
     runs-on: ubuntu-latest
     env:
       KVMAPP_WEB_PATH: server/web
@@ -37,209 +99,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            gcc-riscv64-linux-gnu \
-            patchelf \
-            xz-utils \
-            kpartx \
-            parted
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Download and setup RISC-V musl toolchain
+      - name: Build with Docker container
         run: |
-          echo "Downloading RISC-V musl cross-compiler toolchain..."
-          
-          # List of mirror URLs to try (primary and fallbacks)
-          URLS=(
-            "https://coder8479845829.blob.core.windows.net/kvm/riscv64-linux-musl-cross.tgz?sp=r&st=2025-12-10T18:03:48Z&se=2026-12-11T02:18:48Z&sv=2024-11-04&sr=b&sig=2JBmQXVoJrrecVjyXok2N5L45%2FgU5EYMmBjg52q42ho%3D"
-            "https://musl.cc/riscv64-linux-musl-cross.tgz"
-            "https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz"
-          )
-          
-          download_toolchain() {
-            local url="$1"
-            local max_retries=3
-            local retry_delay=10
-            local i=1
-            
-            while [ $i -le $max_retries ]; do
-              echo "Attempt $i/$max_retries: Downloading from $url"
-              if curl -fSL --connect-timeout 30 --max-time 300 -o toolchain.tgz "$url"; then
-                echo "Download successful, extracting..."
-                if tar xzf toolchain.tgz; then
-                  rm toolchain.tgz
-                  return 0
-                else
-                  echo "Extraction failed"
-                  rm -f toolchain.tgz
-                fi
-              else
-                echo "Download failed"
-              fi
-              
-              if [ $i -lt $max_retries ]; then
-                echo "Waiting ${retry_delay}s before retry..."
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-              fi
-              i=$((i + 1))
-            done
-            return 1
-          }
-          
-          # Try each URL until one succeeds
-          for url in "${URLS[@]}"; do
-            if download_toolchain "$url"; then
-              echo "Toolchain ready from: $url"
-              break
-            fi
-            echo "All retries failed for $url, trying next mirror..."
-          done
-          
-          # Verify toolchain was downloaded and contains expected files
-          if [ ! -x "riscv64-linux-musl-cross/bin/riscv64-linux-musl-gcc" ]; then
-            echo "ERROR: Failed to download toolchain from all mirrors or toolchain is incomplete"
-            exit 1
-          fi
-          
-          echo "$PWD/riscv64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "${{ github.workspace }}/output:/workspace/output" \
+            -e WORKSPACE=/workspace \
+            -e OUTPUT_DIR=/workspace/output \
+            "${{ needs.docker-image.outputs.image }}" \
+            build-nanokvm
 
-      - name: Verify toolchains
+      - name: List build artifacts
         run: |
-          echo "GNU toolchain:"
-          riscv64-linux-gnu-gcc --version
+          echo "Build output:"
+          ls -la output/
           echo ""
-          echo "Musl toolchain:"
-          riscv64-linux-musl-gcc --version
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: server/go.sum
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        working-directory: web
-        run: pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: web
-        run: pnpm build
-
-      - name: Build Go backend server
-        working-directory: server
-        run: |
-          echo "Building NanoKVM-Server for RISC-V 64-bit..."
-          export CGO_ENABLED=1
-          export GOOS=linux
-          export GOARCH=riscv64
-          export CC="riscv64-linux-musl-gcc"
-          export CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d"
-          
-          go build -o NanoKVM-Server -v
-          
-          if [ -f "NanoKVM-Server" ]; then
-            echo "Binary built successfully"
-            file NanoKVM-Server
-            # Patch RPATH for dynamic library loading
-            patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
-            echo "RPATH patched successfully"
-          else
-            echo "Build failed - binary not found"
-            exit 1
-          fi
-
-      - name: Build EDID update utility
-        working-directory: tools/nanokvm_update_edid
-        run: |
-          make clean
-          make
-
-      - name: Assemble kvmapp update package
-        run: |
-          mkdir -p output
-          KVMAPP_ROOT=output/kvmapp
-          WEB_SUBDIR=${KVMAPP_WEB_PATH:-server/web}
-          WEB_ROOT="$KVMAPP_ROOT/$WEB_SUBDIR"
-          SERVER_ROOT="$KVMAPP_ROOT/server"
-          
-          # Copy base kvmapp structure
-          mkdir -p "$KVMAPP_ROOT"
-          cp -r kvmapp/. "$KVMAPP_ROOT"
-          
-          # Add web frontend
-          mkdir -p "$WEB_ROOT"
-          echo "Packaging web assets into $WEB_ROOT"
-          cp -r web/dist/. "$WEB_ROOT"
-          
-          # Add server binary and dependencies
-          mkdir -p "$SERVER_ROOT"
-          cp server/NanoKVM-Server "$SERVER_ROOT/"
-          if [ -d "server/dl_lib" ]; then
-            cp -r server/dl_lib "$SERVER_ROOT/"
-          fi
-          
-          # Copy server config files if they exist
-          for cfg in server/config/*.yaml server/config/*.yml; do
-            [ -f "$cfg" ] && cp "$cfg" "$SERVER_ROOT/" || true
-          done
-          
-          # Create version file
-          echo "dev-$(git rev-parse --short HEAD)" > "$KVMAPP_ROOT/version"
-          
-          # Set executable permissions
-          chmod +x "$KVMAPP_ROOT/kvm_system/"* 2>/dev/null || true
-          chmod +x "$SERVER_ROOT/NanoKVM-Server"
-          chmod +x "$KVMAPP_ROOT/system/init.d/"* 2>/dev/null || true
-          
-          # Add tools
-          mkdir -p output/tools
-          cp tools/nanokvm_update_edid/nanokvm_update_edid output/tools/
-          
-          # Create update package (similar to official releases)
-          echo "Creating kvmapp update package..."
-          tar -czf nanokvm-kvmapp-update.tar.gz -C output/kvmapp .
-          
-          # Create full artifacts package
-          tar -czf nanokvm-artifacts.tar.gz -C output .
-          
-          echo "Build artifacts created successfully"
-          ls -la *.tar.gz
+          echo "Packages:"
+          ls -la output/*.tar.gz || true
 
       - name: Upload kvmapp update package
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-kvmapp-${{ github.sha }}
-          path: nanokvm-kvmapp-update.tar.gz
+          path: output/nanokvm-kvmapp-update.tar.gz
           if-no-files-found: error
 
       - name: Upload build artifacts
-        # Note: We include both the tarball and individual files for convenience.
-        # The tarball is used by the OS image build job, while individual files
-        # allow quick access without extracting the archive.
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-build-${{ github.sha }}
           path: |
-            nanokvm-artifacts.tar.gz
-            web/dist
-            server/NanoKVM-Server
-            tools/nanokvm_update_edid/nanokvm_update_edid
+            output/nanokvm-artifacts.tar.gz
+            output/kvmapp/
+            output/tools/
           if-no-files-found: error
 
   build-os-image:
