@@ -258,7 +258,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifacts to Azure Storage
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload_to_azure) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
@@ -304,7 +303,6 @@ jobs:
     name: Build flashable OS image
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_os_image }}
 
     steps:
       - name: Checkout repository
@@ -425,7 +423,6 @@ jobs:
           if-no-files-found: error
 
       - name: Upload OS image to Azure Storage
-        if: ${{ inputs.upload_to_azure }}
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
