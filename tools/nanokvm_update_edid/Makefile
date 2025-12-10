@@ -1,12 +1,13 @@
 # CROSS_COMPILE = aarch64-none-linux-gnu-
-# CROSS_COMPILE = riscv64-unknown-linux-gnu-
-CROSS_COMPILE ?= riscv64-unknown-linux-musl-
+# CROSS_COMPILE = riscv64-unknown-linux-musl-
+CROSS_COMPILE ?= riscv64-linux-gnu-
 # CROSS_COMPILE = riscv64-unknown-elf-
 
 SDK_SYSROOT ?=
+DEFAULT_MUSL_SYSROOT ?= /usr/local/RISC-V-toolchain/riscv64-linux-musl-x86_64/sysroot/usr/include
 
 ifeq ($(findstring musl,$(CROSS_COMPILE)),musl)
-SDK_SYSROOT ?= /usr/local/RISC-V-toolchain/riscv64-linux-musl-x86_64/sysroot/usr/include
+SDK_SYSROOT ?= $(DEFAULT_MUSL_SYSROOT)
 endif
 
 ifneq ($(SDK_SYSROOT),)
