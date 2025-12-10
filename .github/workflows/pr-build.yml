@@ -178,6 +178,9 @@ jobs:
           if-no-files-found: error
 
       - name: Upload build artifacts
+        # Note: We include both the tarball and individual files for convenience.
+        # The tarball is used by the OS image build job, while individual files
+        # allow quick access without extracting the archive.
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-build-${{ github.sha }}
@@ -270,11 +273,18 @@ jobs:
           echo "Verifying installation..."
           ls -la mnt/rootfs/kvmapp/
           
-          # Cleanup
+          # Cleanup - these commands may fail if the device was not set up,
+          # so we handle errors gracefully with logging
           echo "Cleaning up..."
           sudo umount mnt/rootfs
-          sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
-          sudo kpartx -d base-image.img 2>/dev/null || true
+          
+          # Detach loop device if it exists
+          if [ -n "$LOOP_DEV" ]; then
+            sudo losetup -d "$LOOP_DEV" 2>/dev/null || echo "Note: Loop device cleanup skipped (may already be detached)"
+          fi
+          
+          # Remove kpartx mappings if they exist
+          sudo kpartx -d base-image.img 2>/dev/null || echo "Note: kpartx cleanup skipped (mappings may not exist)"
           
           echo "kvmapp injection complete"
 
