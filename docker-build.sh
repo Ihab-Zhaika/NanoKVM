@@ -55,6 +55,10 @@ build_server() {
     
     cd "$WORKSPACE/server"
     
+    # Fix Git ownership issue when running in Docker with mounted volumes
+    # This is needed because the container user differs from the host user
+    git config --global --add safe.directory "$WORKSPACE" 2>/dev/null || true
+    
     # Set cross-compilation environment
     export CGO_ENABLED=1
     export GOOS=linux
@@ -62,8 +66,9 @@ build_server() {
     export CC="riscv64-linux-musl-gcc"
     export CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d"
     
-    # Build the binary
-    go build -o NanoKVM-Server -v
+    # Build the binary with -buildvcs=false to avoid Git VCS stamping issues
+    # when running in Docker with mounted volumes
+    go build -buildvcs=false -o NanoKVM-Server -v
     
     if [ ! -f "NanoKVM-Server" ]; then
         log_error "Server build failed - binary not found"
@@ -169,6 +174,10 @@ main() {
     log_info "Starting NanoKVM build..."
     log_info "Workspace: $WORKSPACE"
     log_info "Output: $OUTPUT_DIR"
+    
+    # Fix Git ownership issue when running in Docker with mounted volumes
+    # This is needed because the container user differs from the host user
+    git config --global --add safe.directory "$WORKSPACE" 2>/dev/null || true
     
     # Check if we have the source
     if [ ! -f "$WORKSPACE/server/go.mod" ]; then
