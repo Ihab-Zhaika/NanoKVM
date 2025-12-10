@@ -3,8 +3,14 @@
 CROSS_COMPILE ?= riscv64-unknown-linux-musl-
 # CROSS_COMPILE = riscv64-unknown-elf-
 
+SDK_SYSROOT ?=
+
 ifeq ($(findstring musl,$(CROSS_COMPILE)),musl)
-CFLAGS += -I/usr/local/RISC-V-toolchain/riscv64-linux-musl-x86_64/sysroot/usr/include
+SDK_SYSROOT ?= /usr/local/RISC-V-toolchain/riscv64-linux-musl-x86_64/sysroot/usr/include
+endif
+
+ifneq ($(SDK_SYSROOT),)
+CFLAGS += -I$(SDK_SYSROOT)
 endif
 
 CC = $(CROSS_COMPILE)gcc
