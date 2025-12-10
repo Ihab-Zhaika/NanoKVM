@@ -62,6 +62,40 @@ jobs:
       KVMAPP_WEB_PATH: server/web
 
     steps:
+      - name: Debug secrets availability
+        run: |
+          echo "=== Debugging Secrets Availability ==="
+          echo "Checking if secrets are populated in the build job..."
+          echo ""
+          if [ -z "${{ secrets.ACR_REGISTRY }}" ]; then
+            echo "❌ ACR_REGISTRY secret is NOT populated!"
+          else
+            echo "✅ ACR_REGISTRY secret is populated (value hidden for security)"
+            echo "   Length: $(echo -n '${{ secrets.ACR_REGISTRY }}' | wc -c) characters"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_USERNAME }}" ]; then
+            echo "❌ ACR_USERNAME secret is NOT populated!"
+          else
+            echo "✅ ACR_USERNAME secret is populated"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_PASSWORD }}" ]; then
+            echo "❌ ACR_PASSWORD secret is NOT populated!"
+          else
+            echo "✅ ACR_PASSWORD secret is populated"
+          fi
+          echo ""
+          echo "=== Docker Image Workflow Output ==="
+          echo "docker-image.outputs.image: '${{ needs.docker-image.outputs.image }}'"
+          echo "docker-image.outputs.image_tag: '${{ needs.docker-image.outputs.image_tag }}'"
+          echo ""
+          echo "=== Environment Info ==="
+          echo "GitHub Event: ${{ github.event_name }}"
+          echo "GitHub Ref: ${{ github.ref }}"
+          echo "GitHub Repository: ${{ github.repository }}"
+          echo "=================================="
+
       - name: Checkout repository
         uses: actions/checkout@v4
 

@@ -61,6 +61,33 @@ jobs:
       exists: ${{ steps.check-image.outputs.exists }}
 
     steps:
+      - name: Debug secrets availability (docker-build)
+        run: |
+          echo "=== Debugging Secrets in docker-build.yml ==="
+          echo "This workflow was triggered by: ${{ github.event_name }}"
+          echo ""
+          if [ -z "${{ secrets.ACR_REGISTRY }}" ]; then
+            echo "❌ ACR_REGISTRY secret is NOT populated in docker-build workflow!"
+          else
+            echo "✅ ACR_REGISTRY secret is populated"
+            echo "   Length: $(echo -n '${{ secrets.ACR_REGISTRY }}' | wc -c) characters"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_USERNAME }}" ]; then
+            echo "❌ ACR_USERNAME secret is NOT populated!"
+          else
+            echo "✅ ACR_USERNAME secret is populated"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_PASSWORD }}" ]; then
+            echo "❌ ACR_PASSWORD secret is NOT populated!"
+          else
+            echo "✅ ACR_PASSWORD secret is populated"
+          fi
+          echo ""
+          echo "Input force_rebuild: ${{ inputs.force_rebuild }}"
+          echo "=================================="
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -79,15 +106,27 @@ jobs:
         env:
           REGISTRY: ${{ secrets.ACR_REGISTRY }}
         run: |
+          echo "=== Generating Image Metadata ==="
+          echo "REGISTRY env var: '$REGISTRY'"
+          echo "ACR_IMAGE_NAME env var: '$ACR_IMAGE_NAME'"
+          echo "ACR_IMAGE_TAG env var: '$ACR_IMAGE_TAG'"
+          echo ""
           if [ -z "$REGISTRY" ]; then
-            echo "ERROR: ACR_REGISTRY secret is not set"
+            echo "ERROR: ACR_REGISTRY secret is not set or not passed to this workflow"
+            echo "If this is a workflow_call, ensure secrets are passed correctly"
             exit 1
           fi
           IMAGE="${REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
+          echo "Constructed IMAGE: ${IMAGE}"
           echo "image=${IMAGE}" >> $GITHUB_OUTPUT
           echo "tag=${ACR_IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
-          echo "Image: ${IMAGE}"
+          echo ""
+          echo "Outputs set:"
+          echo "  image=${IMAGE}"
+          echo "  tag=${ACR_IMAGE_TAG}"
+          echo "  registry=${REGISTRY}"
+          echo "=================================="
 
       - name: Check if image exists in registry
         id: check-image
