@@ -137,14 +137,15 @@ jobs:
           DOCKER_IMAGE: ${{ steps.docker-image.outputs.image }}
         run: |
           echo "Using Docker image: $DOCKER_IMAGE"
+          # Run the build script from the mounted workspace (not the cached one in the image)
+          # This ensures we use the latest version of docker-build.sh
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -v "${{ github.workspace }}/output:/workspace/output" \
             -e WORKSPACE=/workspace \
             -e OUTPUT_DIR=/workspace/output \
-            -e CGO_CFLAGS="-march=rv64gc -mabi=lp64d" \
             "$DOCKER_IMAGE" \
-            /bin/bash -c "git config --global --add safe.directory /workspace && build-nanokvm"
+            /bin/bash -c "git config --global --add safe.directory /workspace && chmod +x /workspace/docker-build.sh && /workspace/docker-build.sh"
 
       - name: List build artifacts
         run: |
