@@ -13,3 +13,12 @@ export function updateVirtualDevice(device: string) {
 
   return http.post('/api/vm/device/virtual', data);
 }
+
+// enable/disable virtual audio feature
+export function setVirtualAudio(enabled: boolean) {
+  const data = {
+    enabled
+  };
+
+  return http.post('/api/vm/device/virtual/audio', data);
+}

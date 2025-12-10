@@ -56,9 +56,12 @@ type DeleteScriptReq struct {
 }
 
 type GetVirtualDeviceRsp struct {
-	Network bool `json:"network"`
-	Media   bool `json:"media"`
-	Disk    bool `json:"disk"`
+	Network      bool `json:"network"`
+	Media        bool `json:"media"`
+	Disk         bool `json:"disk"`
+	AudioEnabled bool `json:"audioEnabled"`
+	AudioIn      bool `json:"audioIn"`
+	AudioOut     bool `json:"audioOut"`
 }
 
 type UpdateVirtualDeviceReq struct {
@@ -140,4 +143,14 @@ type GetWebTitleRsp struct {
 
 type SetTlsReq struct {
 	Enabled bool `validate:"omitempty"`
+}
+
+type SetVirtualAudioReq struct {
+	Enabled bool `validate:"omitempty"`
+}
+
+type SetVirtualAudioRsp struct {
+	Enabled  bool `json:"enabled"`
+	AudioIn  bool `json:"audioIn"`
+	AudioOut bool `json:"audioOut"`
 }

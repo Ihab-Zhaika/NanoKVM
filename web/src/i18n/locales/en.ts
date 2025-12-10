@@ -277,6 +277,15 @@ const en = {
         hdmi: {
           description: 'Enable HDMI/monitor output'
         },
+        virtualAudio: {
+          title: 'Virtual Audio',
+          description: 'Enable virtual audio devices',
+          tip: 'Mount virtual audio input/output devices on the remote host for audio streaming via WebRTC',
+          nanoInput: 'NanoInput',
+          nanoInputDesc: 'Virtual microphone for audio input to the remote host',
+          nanoOutput: 'NanoOutput',
+          nanoOutputDesc: 'Virtual speaker for audio output from the remote host'
+        },
         hidOnly: 'HID-Only Mode',
         disk: 'Virtual Disk',
         diskDesc: 'Mount SD card on the remote host',

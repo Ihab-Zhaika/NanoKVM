@@ -13,9 +13,12 @@ import (
 )
 
 const (
-	virtualNetwork = "/boot/usb.rndis0"
-	virtualMedia   = "/boot/usb.disk0"
-	virtualDisk    = "/boot/usb.disk1"
+	virtualNetwork    = "/boot/usb.rndis0"
+	virtualMedia      = "/boot/usb.disk0"
+	virtualDisk       = "/boot/usb.disk1"
+	virtualAudioIn    = "/boot/usb.audio_in"
+	virtualAudioOut   = "/boot/usb.audio_out"
+	virtualAudioFile  = "/boot/usb.audio"
 )
 
 var (
@@ -57,6 +60,34 @@ var (
 		"rm /boot/usb.disk1",
 		"/etc/init.d/S03usbdev start",
 	}
+
+	// Virtual Audio Input (NanoInput) - microphone from remote host's perspective
+	mountAudioInCommands = []string{
+		"touch /boot/usb.audio_in",
+		"/etc/init.d/S03usbdev stop",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	unmountAudioInCommands = []string{
+		"/etc/init.d/S03usbdev stop",
+		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/uac2.usb0",
+		"rm /boot/usb.audio_in",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	// Virtual Audio Output (NanoOutput) - speaker from remote host's perspective
+	mountAudioOutCommands = []string{
+		"touch /boot/usb.audio_out",
+		"/etc/init.d/S03usbdev stop",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	unmountAudioOutCommands = []string{
+		"/etc/init.d/S03usbdev stop",
+		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/uac2.usb1",
+		"rm /boot/usb.audio_out",
+		"/etc/init.d/S03usbdev start",
+	}
 )
 
 func (s *Service) GetVirtualDevice(c *gin.Context) {
@@ -65,11 +96,17 @@ func (s *Service) GetVirtualDevice(c *gin.Context) {
 	network, _ := isDeviceExist(virtualNetwork)
 	media, _ := isDeviceExist(virtualMedia)
 	disk, _ := isDeviceExist(virtualDisk)
+	audioEnabled, _ := isDeviceExist(virtualAudioFile)
+	audioIn, _ := isDeviceExist(virtualAudioIn)
+	audioOut, _ := isDeviceExist(virtualAudioOut)
 
 	rsp.OkRspWithData(c, &proto.GetVirtualDeviceRsp{
-		Network: network,
-		Media:   media,
-		Disk:    disk,
+		Network:      network,
+		Media:        media,
+		Disk:         disk,
+		AudioEnabled: audioEnabled,
+		AudioIn:      audioIn,
+		AudioOut:     audioOut,
 	})
 	log.Debugf("get virtual device success")
 }
@@ -114,6 +151,24 @@ func (s *Service) UpdateVirtualDevice(c *gin.Context) {
 		} else {
 			commands = unmountDiskCommands
 		}
+	case "audioIn":
+		device = virtualAudioIn
+
+		exist, _ := isDeviceExist(device)
+		if !exist {
+			commands = mountAudioInCommands
+		} else {
+			commands = unmountAudioInCommands
+		}
+	case "audioOut":
+		device = virtualAudioOut
+
+		exist, _ := isDeviceExist(device)
+		if !exist {
+			commands = mountAudioOutCommands
+		} else {
+			commands = unmountAudioOutCommands
+		}
 	default:
 		rsp.ErrRsp(c, -2, "invalid arguments")
 		return
@@ -156,4 +211,42 @@ func isDeviceExist(device string) (bool, error) {
 
 	log.Errorf("check file %s err: %s", device, err)
 	return false, err
+}
+
+func (s *Service) SetVirtualAudio(c *gin.Context) {
+	var req proto.SetVirtualAudioReq
+	var rsp proto.Response
+
+	if err := proto.ParseFormRequest(c, &req); err != nil {
+		rsp.ErrRsp(c, -1, "invalid argument")
+		return
+	}
+
+	if req.Enabled {
+		// Enable audio feature by creating marker file
+		file, err := os.Create(virtualAudioFile)
+		if err != nil {
+			log.Errorf("failed to create audio file: %s", err)
+			rsp.ErrRsp(c, -2, "operation failed")
+			return
+		}
+		file.Close()
+	} else {
+		// Disable audio feature - remove all audio marker files
+		_ = os.Remove(virtualAudioFile)
+		_ = os.Remove(virtualAudioIn)
+		_ = os.Remove(virtualAudioOut)
+	}
+
+	enabled, _ := isDeviceExist(virtualAudioFile)
+	audioIn, _ := isDeviceExist(virtualAudioIn)
+	audioOut, _ := isDeviceExist(virtualAudioOut)
+
+	rsp.OkRspWithData(c, &proto.SetVirtualAudioRsp{
+		Enabled:  enabled,
+		AudioIn:  audioIn,
+		AudioOut: audioOut,
+	})
+
+	log.Debugf("set virtual audio enabled=%v success", req.Enabled)
 }
