@@ -119,20 +119,23 @@ jobs:
           if-no-files-found: error
 
       - name: Upload artifacts to Azure Storage
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_to_azure && secrets.AZURE_STORAGE_CONNECTION_STRING != '' }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload_to_azure) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
+          # Skip if connection string is not set
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "AZURE_STORAGE_CONNECTION_STRING not set, skipping Azure upload"
+            exit 0
+          fi
+          
           # Install Azure CLI if not present
           if ! command -v az &> /dev/null; then
             curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
           fi
           
-          CONTAINER="${{ secrets.AZURE_STORAGE_CONTAINER }}"
-          if [ -z "$CONTAINER" ]; then
-            CONTAINER="nanokvm-builds"
-          fi
-          
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
           VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
           BRANCH_NAME="${{ github.ref_name }}"
           UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
@@ -283,20 +286,23 @@ jobs:
           if-no-files-found: error
 
       - name: Upload OS image to Azure Storage
-        if: ${{ inputs.upload_to_azure && secrets.AZURE_STORAGE_CONNECTION_STRING != '' }}
+        if: ${{ inputs.upload_to_azure }}
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
+          # Skip if connection string is not set
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "AZURE_STORAGE_CONNECTION_STRING not set, skipping Azure upload"
+            exit 0
+          fi
+          
           # Install Azure CLI if not present
           if ! command -v az &> /dev/null; then
             curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
           fi
           
-          CONTAINER="${{ secrets.AZURE_STORAGE_CONTAINER }}"
-          if [ -z "$CONTAINER" ]; then
-            CONTAINER="nanokvm-builds"
-          fi
-          
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
           VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
           BRANCH_NAME="${{ github.ref_name }}"
           UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
