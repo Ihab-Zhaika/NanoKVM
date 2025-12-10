@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      upload_to_azure:
+        description: 'Upload artifacts to Azure Storage'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -32,6 +37,8 @@ env:
   ACR_IMAGE_TAG: latest
   # Base NanoKVM OS image for creating flashable images
   BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/NanoKVM/20240702_NanoKVM_Rev1_0_0.img.xz
+  # Azure Storage configuration
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
 
 jobs:
   # Build Docker image using the reusable workflow
@@ -110,6 +117,46 @@ jobs:
             output/kvmapp/
             output/tools/
           if-no-files-found: error
+
+      - name: Upload artifacts to Azure Storage
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_to_azure && secrets.AZURE_STORAGE_CONNECTION_STRING != '' }}
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          # Install Azure CLI if not present
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+          
+          CONTAINER="${{ secrets.AZURE_STORAGE_CONTAINER }}"
+          if [ -z "$CONTAINER" ]; then
+            CONTAINER="nanokvm-builds"
+          fi
+          
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
+          
+          echo "Uploading artifacts to Azure Storage..."
+          echo "Container: $CONTAINER"
+          echo "Path: $UPLOAD_PATH"
+          
+          # Upload kvmapp package
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
+            --file output/nanokvm-kvmapp-update.tar.gz \
+            --overwrite
+          
+          # Upload full artifacts package
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-artifacts.tar.gz" \
+            --file output/nanokvm-artifacts.tar.gz \
+            --overwrite
+          
+          echo "Artifacts uploaded successfully to Azure Storage"
+          echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
 
   build-os-image:
     name: Build flashable OS image
@@ -222,6 +269,9 @@ jobs:
           # Generate checksum
           sha256sum "${OUTPUT_NAME}.xz" > "${OUTPUT_NAME}.xz.sha256"
           cat "${OUTPUT_NAME}.xz.sha256"
+          
+          # Save output name for later steps
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
 
       - name: Upload OS image
         uses: actions/upload-artifact@v4
@@ -231,3 +281,43 @@ jobs:
             nanokvm-os-*.img.xz
             nanokvm-os-*.img.xz.sha256
           if-no-files-found: error
+
+      - name: Upload OS image to Azure Storage
+        if: ${{ inputs.upload_to_azure && secrets.AZURE_STORAGE_CONNECTION_STRING != '' }}
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          # Install Azure CLI if not present
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+          
+          CONTAINER="${{ secrets.AZURE_STORAGE_CONTAINER }}"
+          if [ -z "$CONTAINER" ]; then
+            CONTAINER="nanokvm-builds"
+          fi
+          
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
+          
+          echo "Uploading OS image to Azure Storage..."
+          echo "Container: $CONTAINER"
+          echo "Path: $UPLOAD_PATH"
+          
+          # Upload OS image
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz" \
+            --file "${OUTPUT_NAME}.xz" \
+            --overwrite
+          
+          # Upload checksum
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz.sha256" \
+            --file "${OUTPUT_NAME}.xz.sha256" \
+            --overwrite
+          
+          echo "OS image uploaded successfully to Azure Storage"
+          echo "Download URL: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/${OUTPUT_NAME}.xz"

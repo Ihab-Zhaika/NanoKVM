@@ -74,6 +74,31 @@ The CI workflow uses Azure Container Registry (ACR) to store and cache the Docke
    - `ACR_PASSWORD`: Admin password or service principal secret
    - `TOOLCHAIN_URL` (optional): Custom URL for RISC-V musl toolchain (e.g., Azure blob storage URL with SAS token)
 
+### Azure Storage Setup (for artifact uploads)
+
+To enable uploading build artifacts and OS images to Azure Blob Storage:
+
+1. **Create a Storage Account** (if not already exists):
+   ```bash
+   az storage account create --name <storage-name> --resource-group <rg-name> --sku Standard_LRS
+   ```
+
+2. **Create a container for builds**:
+   ```bash
+   az storage container create --name nanokvm-builds --account-name <storage-name>
+   ```
+
+3. **Get the connection string**:
+   ```bash
+   az storage account show-connection-string --name <storage-name> --resource-group <rg-name>
+   ```
+
+4. **Add GitHub Secrets**:
+   - `AZURE_STORAGE_CONNECTION_STRING`: The full connection string from step 3
+   - `AZURE_STORAGE_CONTAINER`: Container name (default: `nanokvm-builds`)
+
+Artifacts will be uploaded to: `<container>/<branch>/<version>/`
+
 ### Manual Workflow Triggers
 
 To build a flashable OS image:
@@ -81,7 +106,8 @@ To build a flashable OS image:
 1. Go to Actions → "Build NanoKVM preview artifacts"
 2. Click "Run workflow"
 3. Check "Build flashable OS image"
-4. Click "Run workflow"
+4. Check "Upload artifacts to Azure Storage" (enabled by default)
+5. Click "Run workflow"
 
 To force rebuild the Docker image:
 
