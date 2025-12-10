@@ -56,9 +56,10 @@ jobs:
 
       - name: Assemble artifacts
         run: |
+          mkdir -p output
+          cp -r kvmapp output/
           mkdir -p output/kvmapp/server/web
           cp -r web/dist/. output/kvmapp/server/web
-          cp -r kvmapp output/
           mkdir -p output/tools
           cp tools/nanokvm_update_edid/nanokvm_update_edid output/tools/
           tar -czf nanokvm-artifacts.tar.gz -C output .
