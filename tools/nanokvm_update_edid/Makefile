@@ -7,7 +7,7 @@ SDK_SYSROOT ?=
 DEFAULT_MUSL_SYSROOT ?= /usr/local/RISC-V-toolchain/riscv64-linux-musl-x86_64/sysroot/usr/include
 
 # Leave SDK_SYSROOT empty for the default glibc toolchain; set it when using a musl SDK.
-ifeq ($(findstring musl,$(CROSS_COMPILE)),musl)
+ifneq (,$(findstring musl,$(CROSS_COMPILE)))
 SDK_SYSROOT ?= $(DEFAULT_MUSL_SYSROOT)
 endif
 
