@@ -101,7 +101,13 @@ jobs:
 
       - name: Extract build artifacts
         run: |
-          tar --overwrite -xzf artifacts/nanokvm-artifacts.tar.gz -C artifacts
+          ARTIFACT_ARCHIVE=artifacts/nanokvm-artifacts.tar.gz
+          if [ ! -f "$ARTIFACT_ARCHIVE" ]; then
+            echo "Artifact archive missing: $ARTIFACT_ARCHIVE"
+            exit 1
+          fi
+          find artifacts -mindepth 1 -maxdepth 1 ! -name "$(basename "$ARTIFACT_ARCHIVE")" -exec rm -rf {} +
+          tar --overwrite --recursive-unlink -xzf "$ARTIFACT_ARCHIVE" -C artifacts
 
       - name: Download latest base OS image
         env:
