@@ -80,3 +80,65 @@ jobs:
             web/dist
             tools/nanokvm_update_edid/nanokvm_update_edid
           if-no-files-found: error
+
+  os-image:
+    name: Build flashable OS image
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nanokvm-build-${{ github.sha }}
+          path: artifacts
+
+      - name: Extract build artifacts
+        run: |
+          tar -xzf artifacts/nanokvm-artifacts.tar.gz -C artifacts
+
+      - name: Download latest base OS image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p os-image
+          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          gh release download "${latest_tag}" --pattern "*.img*" --dir os-image --clobber
+          img_path=$(ls os-image/*.img* | head -n1)
+          if [[ "${img_path}" == *.xz ]]; then
+            unxz "${img_path}"
+            img_path="${img_path%.xz}"
+          fi
+          echo "OS_IMAGE=${img_path}" >> "$GITHUB_ENV"
+
+      - name: Inject new kvmapp into image
+        run: |
+          sudo mkdir -p /mnt/os-root
+          loopdev=$(sudo losetup -fP --show "$OS_IMAGE")
+          root_part=$(lsblk -lno PATH,FSTYPE "${loopdev}" "${loopdev}"p* | awk '$2=="ext4"{print $1; exit}')
+          if [ -z "$root_part" ]; then
+            echo "No ext4 partition found in image"
+            exit 1
+          fi
+          sudo mount "$root_part" /mnt/os-root
+          sudo rm -rf /mnt/os-root/kvmapp
+          sudo cp -r artifacts/kvmapp /mnt/os-root/kvmapp
+          sudo sync
+          sudo umount /mnt/os-root
+          sudo losetup -d "$loopdev"
+
+      - name: Compress updated image
+        run: |
+          xz -T0 "$OS_IMAGE"
+          echo "OS_IMAGE_XZ=${OS_IMAGE}.xz" >> "$GITHUB_ENV"
+
+      - name: Upload flashable image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanokvm-os-image-${{ github.sha }}
+          path: ${{ env.OS_IMAGE_XZ }}
+          if-no-files-found: error
