@@ -46,8 +46,48 @@ The repository includes GitHub Actions workflows that automatically build using 
 ### Build Artifacts
 
 - `nanokvm-kvmapp-{sha}.tar.gz` - Update package for existing installations
-- `nanokvm-build-{sha}` - All build artifacts
-- `nanokvm-os-image-{sha}` - Flashable SD card image (manual trigger only)
+- `nanokvm-build-{sha}` - All build artifacts (includes WireGuard tools)
+- `nanokvm-os-existing-{sha}` - Flashable SD card image based on official release (with WireGuard)
+- `nanokvm-os-scratch-{sha}` - Flashable SD card image built from scratch with Buildroot
+
+### Two Image Types
+
+**1. Existing Base Image (`-existing` suffix)**
+- Uses official NanoKVM v1.4.0 base image
+- Injects custom kvmapp + WireGuard tools
+- Fast build (~5 minutes)
+- Best for most users
+
+**2. Scratch Image (`-scratch` suffix)**  
+- Builds complete OS from scratch using Buildroot
+- Full control over system packages
+- Slow build (~30-60 minutes)
+- Use when you need custom kernel or system packages
+
+### WireGuard VPN Support
+
+Both image types include WireGuard VPN client:
+- `wg` - WireGuard command-line tool
+- `wg-quick` - Quick setup script
+- `/etc/wireguard/` - Configuration directory
+
+To configure WireGuard after flashing:
+```bash
+# Create configuration
+cat > /etc/wireguard/wg0.conf << EOF
+[Interface]
+PrivateKey = <your-private-key>
+Address = 10.0.0.2/24
+
+[Peer]
+PublicKey = <server-public-key>
+Endpoint = <server-ip>:51820
+AllowedIPs = 0.0.0.0/0
+EOF
+
+# Start WireGuard
+wg-quick up wg0
+```
 
 ### Azure Container Registry Setup
 
@@ -101,24 +141,23 @@ Artifacts will be uploaded to: `<container>/<branch>/<version>/`
 
 ### Manual Workflow Triggers
 
-To build a flashable OS image:
-
+**Build existing-base OS image (fast, with WireGuard):**
 1. Go to Actions → "Build NanoKVM preview artifacts"
 2. Click "Run workflow"
-3. Check "Build flashable OS image"
-4. Check "Upload artifacts to Azure Storage" (enabled by default)
-5. Click "Run workflow"
-
-To force rebuild the Docker image:
-
-1. Go to Actions → "Build Docker Image"
-2. Click "Run workflow"
-3. Check "Force rebuild Docker image"
+3. Check "Include WireGuard VPN client" (enabled by default)
 4. Click "Run workflow"
 
-Or via the main build workflow:
+**Build from-scratch OS image with Buildroot (slow, full control):**
+1. Go to Actions → "Build NanoKVM from scratch (Buildroot)"
+2. Click "Run workflow"
+3. Configure options:
+   - Include WireGuard VPN client
+   - Include Tailscale VPN client
+   - Add custom Buildroot packages (comma-separated)
+4. Click "Run workflow"
 
-1. Go to Actions → "Build NanoKVM preview artifacts"
+**Force rebuild the Docker image:**
+1. Go to Actions → "Build Docker Image"
 2. Click "Run workflow"
 3. Check "Force rebuild Docker image"
 4. Click "Run workflow"

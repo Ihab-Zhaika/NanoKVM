@@ -17,6 +17,11 @@ on:
         required: false
         default: true
         type: boolean
+      include_wireguard:
+        description: 'Include WireGuard VPN client in OS image'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -33,6 +38,8 @@ env:
   AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
   # RISC-V musl toolchain URL (with fallbacks)
   TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
+  # WireGuard pre-built binaries URL (RISC-V)
+  WIREGUARD_URL: https://github.com/WireGuard/wireguard-tools/releases/download/v1.0.20210914/wireguard-tools-1.0.20210914.tar.xz
 
 jobs:
   # Build NanoKVM directly on the runner
@@ -185,6 +192,43 @@ jobs:
             echo "EDID utility directory not found, skipping"
           fi
 
+      - name: Build WireGuard tools for RISC-V
+        run: |
+          echo "Building WireGuard tools for RISC-V..."
+          mkdir -p output/wireguard
+          
+          # Download WireGuard tools source
+          curl -L -o /tmp/wireguard-tools.tar.xz "$WIREGUARD_URL" || {
+            echo "Failed to download WireGuard tools, trying alternative..."
+            curl -L -o /tmp/wireguard-tools.tar.xz "https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20210914.tar.xz"
+          }
+          
+          cd /tmp
+          tar -xf wireguard-tools.tar.xz
+          cd wireguard-tools-*/src
+          
+          # Cross-compile for RISC-V
+          export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+          export CFLAGS="-march=rv64gc -mabi=lp64d -static"
+          
+          make clean || true
+          make wg
+          
+          if [ -f "wg" ]; then
+            cp wg $GITHUB_WORKSPACE/output/wireguard/
+            echo "WireGuard 'wg' tool built successfully"
+            file $GITHUB_WORKSPACE/output/wireguard/wg
+          else
+            echo "WARNING: WireGuard build failed, continuing without it"
+          fi
+          
+          # Also create wg-quick script (shell script, no compilation needed)
+          if [ -f "../wg-quick/linux.bash" ]; then
+            cp ../wg-quick/linux.bash $GITHUB_WORKSPACE/output/wireguard/wg-quick
+            chmod +x $GITHUB_WORKSPACE/output/wireguard/wg-quick
+            echo "WireGuard 'wg-quick' script copied"
+          fi
+
       - name: Package kvmapp
         run: |
           echo "Packaging kvmapp..."
@@ -301,7 +345,7 @@ jobs:
           echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
 
   build-os-image:
-    name: Build flashable OS image
+    name: Build flashable OS image (existing base)
     needs: build
     runs-on: ubuntu-latest
 
@@ -325,6 +369,12 @@ jobs:
           name: nanokvm-kvmapp-${{ github.sha }}
           path: ./artifacts
 
+      - name: Download build artifacts (includes WireGuard)
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: nanokvm-build-${{ github.sha }}
+          path: ./build-artifacts
+
       - name: Download base NanoKVM OS image
         run: |
           echo "Downloading base NanoKVM OS image..."
@@ -334,7 +384,7 @@ jobs:
           echo "Base image ready"
           ls -la base-image.img
 
-      - name: Inject kvmapp into OS image
+      - name: Inject kvmapp and extras into OS image
         run: |
           set -e
           
@@ -374,6 +424,34 @@ jobs:
           sudo mkdir -p mnt/rootfs/kvmapp
           sudo tar -xzf artifacts/nanokvm-kvmapp-update.tar.gz -C mnt/rootfs/kvmapp
           
+          # Install WireGuard tools if available
+          if [ -d "build-artifacts/output/wireguard" ] || [ -d "build-artifacts/wireguard" ]; then
+            echo "Installing WireGuard tools..."
+            WG_DIR=""
+            [ -d "build-artifacts/output/wireguard" ] && WG_DIR="build-artifacts/output/wireguard"
+            [ -d "build-artifacts/wireguard" ] && WG_DIR="build-artifacts/wireguard"
+            
+            if [ -n "$WG_DIR" ] && [ -f "$WG_DIR/wg" ]; then
+              sudo mkdir -p mnt/rootfs/usr/bin
+              sudo cp "$WG_DIR/wg" mnt/rootfs/usr/bin/
+              sudo chmod +x mnt/rootfs/usr/bin/wg
+              echo "WireGuard 'wg' installed to /usr/bin/"
+            fi
+            
+            if [ -n "$WG_DIR" ] && [ -f "$WG_DIR/wg-quick" ]; then
+              sudo cp "$WG_DIR/wg-quick" mnt/rootfs/usr/bin/
+              sudo chmod +x mnt/rootfs/usr/bin/wg-quick
+              echo "WireGuard 'wg-quick' installed to /usr/bin/"
+            fi
+            
+            # Create WireGuard config directory
+            sudo mkdir -p mnt/rootfs/etc/wireguard
+            sudo chmod 700 mnt/rootfs/etc/wireguard
+            echo "WireGuard config directory created at /etc/wireguard/"
+          else
+            echo "WireGuard tools not found in artifacts, skipping installation"
+          fi
+          
           # Set permissions
           sudo chmod -R 755 mnt/rootfs/kvmapp
           
@@ -400,7 +478,7 @@ jobs:
         run: |
           echo "Compressing final OS image..."
           VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
-          OUTPUT_NAME="nanokvm-os-${VERSION}.img"
+          OUTPUT_NAME="nanokvm-os-existing-${VERSION}.img"
           mv base-image.img "$OUTPUT_NAME"
           xz -9 -T0 "$OUTPUT_NAME"
           
@@ -417,7 +495,7 @@ jobs:
       - name: Upload OS image
         uses: actions/upload-artifact@v4
         with:
-          name: nanokvm-os-image-${{ github.sha }}
+          name: nanokvm-os-existing-${{ github.sha }}
           path: |
             nanokvm-os-*.img.xz
             nanokvm-os-*.img.xz.sha256
