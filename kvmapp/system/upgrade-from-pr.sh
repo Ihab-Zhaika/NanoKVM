@@ -161,10 +161,11 @@ download_artifact() {
     log_info "Downloading artifact from: $URL"
     
     # Try wget first (more common on embedded systems), then curl
+    # Include security flags: timeout and limited redirects
     if command -v wget > /dev/null 2>&1; then
-        wget -q -O "$OUTPUT" "$URL"
+        wget -q --timeout=60 --max-redirect=5 -O "$OUTPUT" "$URL"
     elif command -v curl > /dev/null 2>&1; then
-        curl -fsSL -o "$OUTPUT" "$URL"
+        curl -fsSL --max-time 60 --max-redirs 5 -o "$OUTPUT" "$URL"
     else
         log_error "Neither wget nor curl is available"
         exit 1
@@ -195,9 +196,9 @@ install_kvmapp() {
     rm -rf "$TEMP_DIR"
     mkdir -p "$TEMP_DIR"
     
-    # Extract tarball
+    # Extract tarball with security flags to prevent directory traversal
     log_info "Extracting tarball..."
-    tar -xzf "$TARBALL" -C "$TEMP_DIR"
+    tar --no-absolute-names -xzf "$TARBALL" -C "$TEMP_DIR"
     
     # Verify extraction
     if [ ! -d "$TEMP_DIR" ] || [ -z "$(ls -A "$TEMP_DIR")" ]; then
@@ -240,7 +241,7 @@ set_permissions() {
     
     # Make init scripts executable
     if [ -d "$KVMAPP_DIR/system/init.d" ]; then
-        chmod 755 "$KVMAPP_DIR/system/init.d"/*
+        find "$KVMAPP_DIR/system/init.d" -maxdepth 1 -type f -exec chmod 755 {} \;
     fi
     
     # Make shell scripts executable
