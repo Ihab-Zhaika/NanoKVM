@@ -197,23 +197,67 @@ jobs:
 
       - name: Build Go server
         run: |
+          echo "Building Go server for RISC-V..."
           cd server
-          export CGO_ENABLED=1 GOOS=linux GOARCH=riscv64
+          
+          # Set cross-compilation environment
+          export CGO_ENABLED=1
+          export GOOS=linux
+          export GOARCH=riscv64
           export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+          # Use standard RISC-V flags compatible with musl.cc toolchain
+          # Note: T-Head specific flags like -mcpu=c906fdv require T-Head's custom toolchain
           export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
+          
+          echo "CC=$CC"
+          echo "CGO_CFLAGS=$CGO_CFLAGS"
+          echo "GOOS=$GOOS"
+          echo "GOARCH=$GOARCH"
+          
+          # Build the binary
           go build -buildvcs=false -o NanoKVM-Server -v
+          
+          if [ ! -f "NanoKVM-Server" ]; then
+            echo "ERROR: Server build failed - binary not found"
+            exit 1
+          fi
+          
+          # Patch RPATH for dynamic library loading
           patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
+          
+          echo "Server built successfully"
+          file NanoKVM-Server
 
       - name: Package kvmapp
         run: |
-          mkdir -p output/kvmapp
-          [ -d "web/dist" ] && cp -r web/dist output/kvmapp/server/web/ || mkdir -p output/kvmapp/server/web
-          [ -f "server/NanoKVM-Server" ] && cp server/NanoKVM-Server output/kvmapp/
-          [ -d "server/dl_lib" ] && cp -r server/dl_lib output/kvmapp/
-          [ -d "support/system" ] && cp -r support/system/* output/kvmapp/ 2>/dev/null || true
+          echo "Packaging kvmapp..."
+          mkdir -p output/kvmapp/server/web
+          
+          # Copy frontend
+          if [ -d "web/dist" ]; then
+            cp -r web/dist/* output/kvmapp/server/web/
+          fi
+          
+          # Copy server binary
+          if [ -f "server/NanoKVM-Server" ]; then
+            cp server/NanoKVM-Server output/kvmapp/
+          fi
+          
+          # Copy dynamic libraries if they exist
+          if [ -d "server/dl_lib" ]; then
+            cp -r server/dl_lib output/kvmapp/
+          fi
+          
+          # Copy system files if they exist
+          if [ -d "support/system" ]; then
+            cp -r support/system/* output/kvmapp/ 2>/dev/null || true
+          fi
           
           cd output
           tar -czf nanokvm-kvmapp.tar.gz -C kvmapp .
+          
+          echo "kvmapp packaged successfully"
+          ls -la nanokvm-kvmapp.tar.gz
 
       - name: Upload kvmapp artifact
         uses: actions/upload-artifact@v4

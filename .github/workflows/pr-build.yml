@@ -38,8 +38,6 @@ env:
   AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
   # RISC-V musl toolchain URL (with fallbacks)
   TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
-  # WireGuard pre-built binaries URL (RISC-V)
-  WIREGUARD_URL: https://github.com/WireGuard/wireguard-tools/releases/download/v1.0.20210914/wireguard-tools-1.0.20210914.tar.xz
 
 jobs:
   # Build NanoKVM directly on the runner
@@ -197,15 +195,45 @@ jobs:
           echo "Building WireGuard tools for RISC-V..."
           mkdir -p output/wireguard
           
-          # Download WireGuard tools source
-          curl -L -o /tmp/wireguard-tools.tar.xz "$WIREGUARD_URL" || {
-            echo "Failed to download WireGuard tools, trying alternative..."
-            curl -L -o /tmp/wireguard-tools.tar.xz "https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-1.0.20210914.tar.xz"
-          }
+          # Download WireGuard tools source from git.zx2c4.com (official source)
+          WG_VERSION="1.0.20210914"
+          DOWNLOAD_URLS=(
+            "https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-${WG_VERSION}.tar.xz"
+            "https://github.com/WireGuard/wireguard-tools/archive/refs/tags/v${WG_VERSION}.tar.gz"
+          )
+          
+          DOWNLOADED=false
+          for URL in "${DOWNLOAD_URLS[@]}"; do
+            echo "Trying to download WireGuard from: $URL"
+            if curl -fSL --retry 3 --connect-timeout 30 -o /tmp/wireguard-tools.tar.xz "$URL"; then
+              echo "Downloaded successfully from $URL"
+              DOWNLOADED=true
+              break
+            fi
+            echo "Failed, trying next URL..."
+          done
+          
+          if [ "$DOWNLOADED" = false ]; then
+            echo "WARNING: Failed to download WireGuard tools, skipping"
+            exit 0
+          fi
           
           cd /tmp
-          tar -xf wireguard-tools.tar.xz
-          cd wireguard-tools-*/src
+          # Handle both .tar.xz and .tar.gz formats
+          if file wireguard-tools.tar.xz | grep -q "XZ compressed"; then
+            tar -xJf wireguard-tools.tar.xz
+          else
+            tar -xzf wireguard-tools.tar.xz
+          fi
+          
+          # Find the extracted directory
+          WG_SRC_DIR=$(find . -maxdepth 1 -type d -name "wireguard-tools*" | head -1)
+          if [ -z "$WG_SRC_DIR" ]; then
+            echo "WARNING: Could not find WireGuard source directory"
+            exit 0
+          fi
+          
+          cd "$WG_SRC_DIR/src"
           
           # Cross-compile for RISC-V
           export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
@@ -222,7 +250,7 @@ jobs:
             echo "WARNING: WireGuard build failed, continuing without it"
           fi
           
-          # Also create wg-quick script (shell script, no compilation needed)
+          # Also copy wg-quick script (shell script, no compilation needed)
           if [ -f "../wg-quick/linux.bash" ]; then
             cp ../wg-quick/linux.bash $GITHUB_WORKSPACE/output/wireguard/wg-quick
             chmod +x $GITHUB_WORKSPACE/output/wireguard/wg-quick
