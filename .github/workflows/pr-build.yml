@@ -5,6 +5,23 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      build_os_image:
+        description: 'Build flashable OS image (requires more time and resources)'
+        required: false
+        default: false
+        type: boolean
+      upload_to_azure:
+        description: 'Upload artifacts to Azure Storage'
+        required: false
+        default: true
+        type: boolean
+      include_wireguard:
+        description: 'Include WireGuard VPN client in OS image'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -13,9 +30,19 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Base NanoKVM OS image for creating flashable images (v1.4.0 - February 2025)
+  # This is the latest official base image from https://github.com/sipeed/NanoKVM/releases
+  BASE_IMAGE_URL: https://github.com/sipeed/NanoKVM/releases/download/v1.4.0/20250217_NanoKVM_Rev1_4_0.img.xz
+  # Azure Storage configuration
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+  # RISC-V musl toolchain URL (with fallbacks)
+  TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
+
 jobs:
+  # Build NanoKVM directly on the runner
   build:
-    name: Build frontend and tools
+    name: Build NanoKVM components
     runs-on: ubuntu-latest
     env:
       KVMAPP_WEB_PATH: server/web
@@ -24,59 +51,522 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install RISC-V toolchain
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y gcc-riscv64-linux-gnu
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          node-version: '20'
 
-      - name: Install frontend dependencies
-        working-directory: web
-        run: pnpm install --frozen-lockfile
+      - name: Install pnpm
+        run: npm install -g pnpm@9
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            xz-utils \
+            patchelf \
+            file
+
+      - name: Download and setup RISC-V musl toolchain
+        run: |
+          set -e
+          echo "Downloading RISC-V musl toolchain..."
+          
+          # Define mirrors to try
+          MIRRORS=(
+            "${{ secrets.TOOLCHAIN_URL }}"
+            "https://musl.cc/riscv64-linux-musl-cross.tgz"
+            "https://more.musl.cc/11/x86_64-linux-musl/riscv64-linux-musl-cross.tgz"
+          )
+          
+          TOOLCHAIN_DIR="/opt/toolchain"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          
+          DOWNLOADED=false
+          for URL in "${MIRRORS[@]}"; do
+            if [ -z "$URL" ]; then
+              continue
+            fi
+            echo "Trying: $URL"
+            if curl -fSL --retry 3 --retry-delay 10 --connect-timeout 30 -o /tmp/toolchain.tgz "$URL"; then
+              echo "Downloaded successfully from $URL"
+              DOWNLOADED=true
+              break
+            fi
+            echo "Failed to download from $URL, trying next mirror..."
+          done
+          
+          if [ "$DOWNLOADED" = false ]; then
+            echo "ERROR: Failed to download toolchain from all mirrors"
+            exit 1
+          fi
+          
+          echo "Extracting toolchain..."
+          sudo tar -xzf /tmp/toolchain.tgz -C "$TOOLCHAIN_DIR"
+          rm /tmp/toolchain.tgz
+          
+          # Find the extracted directory
+          TOOLCHAIN_BIN=$(find "$TOOLCHAIN_DIR" -name "riscv64-linux-musl-gcc" -type f | head -1 | xargs dirname)
+          echo "Toolchain bin directory: $TOOLCHAIN_BIN"
+          
+          # Add to PATH
+          echo "$TOOLCHAIN_BIN" >> $GITHUB_PATH
+          echo "TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> $GITHUB_ENV
+          
+          echo "Toolchain setup complete"
+
+      - name: Verify toolchain
+        run: |
+          echo "Checking toolchain..."
+          which riscv64-linux-musl-gcc || echo "Not in PATH yet"
+          $TOOLCHAIN_BIN/riscv64-linux-musl-gcc --version
+
+      - name: Create output directory
+        run: mkdir -p output
 
       - name: Build frontend
-        working-directory: web
-        run: pnpm build
-
-      - name: Build EDID update utility
-        working-directory: tools/nanokvm_update_edid
         run: |
-          make clean
-          make
+          echo "Building frontend..."
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm run build
+          echo "Frontend built successfully"
+          ls -la dist/
 
-      - name: Assemble artifacts
+      - name: Build Go server for RISC-V
         run: |
-          mkdir -p output
-          KVMAPP_ROOT=output/kvmapp
-          WEB_SUBDIR=${KVMAPP_WEB_PATH:-server/web}
-          WEB_ROOT="$KVMAPP_ROOT/$WEB_SUBDIR"
-          mkdir -p "$KVMAPP_ROOT"
-          cp -r kvmapp/. "$KVMAPP_ROOT"
-          mkdir -p "$WEB_ROOT"
-          echo "Packaging web assets into $WEB_ROOT"
-          cp -r web/dist/. "$WEB_ROOT"
-          mkdir -p output/tools
-          cp tools/nanokvm_update_edid/nanokvm_update_edid output/tools/
-          tar -czf nanokvm-artifacts.tar.gz -C output .
+          echo "Building Go server for RISC-V..."
+          cd server
+          
+          # Set cross-compilation environment
+          export CGO_ENABLED=1
+          export GOOS=linux
+          export GOARCH=riscv64
+          export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+          # Use standard RISC-V flags compatible with musl.cc toolchain
+          export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
+          
+          echo "CC=$CC"
+          echo "CGO_CFLAGS=$CGO_CFLAGS"
+          
+          # Build the binary
+          go build -buildvcs=false -o NanoKVM-Server -v
+          
+          if [ ! -f "NanoKVM-Server" ]; then
+            echo "ERROR: Server build failed - binary not found"
+            exit 1
+          fi
+          
+          # Patch RPATH for dynamic library loading
+          patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
+          
+          echo "Server built successfully"
+          file NanoKVM-Server
+
+      - name: Build EDID utility
+        run: |
+          echo "Building EDID utility..."
+          if [ -d "tools/nanokvm_update_edid" ]; then
+            cd tools/nanokvm_update_edid
+            
+            # Set cross-compilation environment
+            export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+            export CROSS_COMPILE="riscv64-linux-musl-"
+            export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
+            
+            make clean || true
+            make
+            
+            echo "EDID utility built successfully"
+          else
+            echo "EDID utility directory not found, skipping"
+          fi
+
+      - name: Build WireGuard tools for RISC-V
+        run: |
+          echo "Building WireGuard tools for RISC-V..."
+          mkdir -p output/wireguard
+          
+          # Download WireGuard tools source from git.zx2c4.com (official source)
+          WG_VERSION="1.0.20210914"
+          DOWNLOAD_URLS=(
+            "https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-${WG_VERSION}.tar.xz"
+            "https://github.com/WireGuard/wireguard-tools/archive/refs/tags/v${WG_VERSION}.tar.gz"
+          )
+          
+          DOWNLOADED=false
+          for URL in "${DOWNLOAD_URLS[@]}"; do
+            echo "Trying to download WireGuard from: $URL"
+            if curl -fSL --retry 3 --connect-timeout 30 -o /tmp/wireguard-tools.tar.xz "$URL"; then
+              echo "Downloaded successfully from $URL"
+              DOWNLOADED=true
+              break
+            fi
+            echo "Failed, trying next URL..."
+          done
+          
+          if [ "$DOWNLOADED" = false ]; then
+            echo "WARNING: Failed to download WireGuard tools, skipping"
+            exit 0
+          fi
+          
+          cd /tmp
+          # Handle both .tar.xz and .tar.gz formats
+          if file wireguard-tools.tar.xz | grep -q "XZ compressed"; then
+            tar -xJf wireguard-tools.tar.xz
+          else
+            tar -xzf wireguard-tools.tar.xz
+          fi
+          
+          # Find the extracted directory
+          WG_SRC_DIR=$(find . -maxdepth 1 -type d -name "wireguard-tools*" | head -1)
+          if [ -z "$WG_SRC_DIR" ]; then
+            echo "WARNING: Could not find WireGuard source directory"
+            exit 0
+          fi
+          
+          cd "$WG_SRC_DIR/src"
+          
+          # Cross-compile for RISC-V
+          export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+          export CFLAGS="-march=rv64gc -mabi=lp64d -static"
+          
+          make clean || true
+          make wg
+          
+          if [ -f "wg" ]; then
+            cp wg $GITHUB_WORKSPACE/output/wireguard/
+            echo "WireGuard 'wg' tool built successfully"
+            file $GITHUB_WORKSPACE/output/wireguard/wg
+          else
+            echo "WARNING: WireGuard build failed, continuing without it"
+          fi
+          
+          # Also copy wg-quick script (shell script, no compilation needed)
+          if [ -f "../wg-quick/linux.bash" ]; then
+            cp ../wg-quick/linux.bash $GITHUB_WORKSPACE/output/wireguard/wg-quick
+            chmod +x $GITHUB_WORKSPACE/output/wireguard/wg-quick
+            echo "WireGuard 'wg-quick' script copied"
+          fi
+
+      - name: Package kvmapp
+        run: |
+          echo "Packaging kvmapp..."
+          KVMAPP_DIR="output/kvmapp"
+          mkdir -p "$KVMAPP_DIR"
+          
+          # Copy frontend
+          if [ -d "web/dist" ]; then
+            mkdir -p "$KVMAPP_DIR/server/web"
+            cp -r web/dist/* "$KVMAPP_DIR/server/web/"
+          fi
+          
+          # Copy server binary
+          if [ -f "server/NanoKVM-Server" ]; then
+            cp server/NanoKVM-Server "$KVMAPP_DIR/"
+          fi
+          
+          # Copy dynamic libraries if they exist
+          if [ -d "server/dl_lib" ]; then
+            cp -r server/dl_lib "$KVMAPP_DIR/"
+          fi
+          
+          # Copy system files if they exist
+          if [ -d "support/system" ]; then
+            cp -r support/system/* "$KVMAPP_DIR/" 2>/dev/null || true
+          fi
+          
+          # Copy tools
+          mkdir -p "output/tools"
+          if [ -f "tools/nanokvm_update_edid/edidctl" ]; then
+            cp tools/nanokvm_update_edid/edidctl output/tools/
+          fi
+          
+          echo "kvmapp packaged successfully"
+          ls -la "$KVMAPP_DIR/"
+
+      - name: Create update package
+        run: |
+          echo "Creating update package..."
+          cd output
+          tar -czf nanokvm-kvmapp-update.tar.gz -C kvmapp .
+          
+          # Create full artifacts package
+          tar -czf nanokvm-artifacts.tar.gz kvmapp tools
+          
+          echo "Packages created:"
+          ls -la *.tar.gz
+
+      - name: List build artifacts
+        run: |
+          echo "Build output:"
+          ls -la output/
+          echo ""
+          echo "Packages:"
+          ls -la output/*.tar.gz || true
+
+      - name: Upload kvmapp update package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanokvm-kvmapp-${{ github.sha }}
+          path: output/nanokvm-kvmapp-update.tar.gz
+          if-no-files-found: error
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-build-${{ github.sha }}
           path: |
-            nanokvm-artifacts.tar.gz
-            web/dist
-            tools/nanokvm_update_edid/nanokvm_update_edid
+            output/nanokvm-artifacts.tar.gz
+            output/kvmapp/
+            output/tools/
           if-no-files-found: error
+
+      - name: Upload artifacts to Azure Storage
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          # Skip if connection string is not set
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "AZURE_STORAGE_CONNECTION_STRING not set, skipping Azure upload"
+            exit 0
+          fi
+          
+          # Install Azure CLI if not present
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+          
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
+          
+          echo "Uploading artifacts to Azure Storage..."
+          echo "Container: $CONTAINER"
+          echo "Path: $UPLOAD_PATH"
+          
+          # Upload kvmapp package
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
+            --file output/nanokvm-kvmapp-update.tar.gz \
+            --overwrite
+          
+          # Upload full artifacts package
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-artifacts.tar.gz" \
+            --file output/nanokvm-artifacts.tar.gz \
+            --overwrite
+          
+          echo "Artifacts uploaded successfully to Azure Storage"
+          echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
+
+  build-os-image:
+    name: Build flashable OS image (existing base)
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install image tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            xz-utils \
+            kpartx \
+            parted \
+            e2fsprogs \
+            dosfstools
+
+      - name: Download kvmapp artifact
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: nanokvm-kvmapp-${{ github.sha }}
+          path: ./artifacts
+
+      - name: Download build artifacts (includes WireGuard)
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: nanokvm-build-${{ github.sha }}
+          path: ./build-artifacts
+
+      - name: Download base NanoKVM OS image
+        run: |
+          echo "Downloading base NanoKVM OS image..."
+          curl -L -o base-image.img.xz "$BASE_IMAGE_URL"
+          echo "Extracting image..."
+          xz -d base-image.img.xz
+          echo "Base image ready"
+          ls -la base-image.img
+
+      - name: Inject kvmapp and extras into OS image
+        run: |
+          set -e
+          
+          # Setup loop device for the image
+          echo "Setting up loop device..."
+          LOOP_DEV=$(sudo losetup --find --show --partscan base-image.img)
+          echo "Loop device: $LOOP_DEV"
+          
+          # Wait for partitions to appear
+          sleep 2
+          
+          # List partitions
+          echo "Partitions:"
+          sudo fdisk -l "$LOOP_DEV"
+          
+          # Find the rootfs partition (usually partition 2)
+          ROOTFS_PART="${LOOP_DEV}p2"
+          if [ ! -b "$ROOTFS_PART" ]; then
+            echo "Trying kpartx..."
+            sudo kpartx -av base-image.img
+            ROOTFS_PART="/dev/mapper/$(basename $LOOP_DEV)p2"
+          fi
+          
+          # Mount rootfs
+          echo "Mounting rootfs partition..."
+          mkdir -p mnt/rootfs
+          sudo mount "$ROOTFS_PART" mnt/rootfs
+          
+          # Backup existing kvmapp
+          if [ -d "mnt/rootfs/kvmapp" ]; then
+            echo "Backing up existing kvmapp..."
+            sudo mv mnt/rootfs/kvmapp mnt/rootfs/kvmapp.bak
+          fi
+          
+          # Extract new kvmapp
+          echo "Installing new kvmapp..."
+          sudo mkdir -p mnt/rootfs/kvmapp
+          sudo tar -xzf artifacts/nanokvm-kvmapp-update.tar.gz -C mnt/rootfs/kvmapp
+          
+          # Install WireGuard tools if available
+          if [ -d "build-artifacts/output/wireguard" ] || [ -d "build-artifacts/wireguard" ]; then
+            echo "Installing WireGuard tools..."
+            WG_DIR=""
+            [ -d "build-artifacts/output/wireguard" ] && WG_DIR="build-artifacts/output/wireguard"
+            [ -d "build-artifacts/wireguard" ] && WG_DIR="build-artifacts/wireguard"
+            
+            if [ -n "$WG_DIR" ] && [ -f "$WG_DIR/wg" ]; then
+              sudo mkdir -p mnt/rootfs/usr/bin
+              sudo cp "$WG_DIR/wg" mnt/rootfs/usr/bin/
+              sudo chmod +x mnt/rootfs/usr/bin/wg
+              echo "WireGuard 'wg' installed to /usr/bin/"
+            fi
+            
+            if [ -n "$WG_DIR" ] && [ -f "$WG_DIR/wg-quick" ]; then
+              sudo cp "$WG_DIR/wg-quick" mnt/rootfs/usr/bin/
+              sudo chmod +x mnt/rootfs/usr/bin/wg-quick
+              echo "WireGuard 'wg-quick' installed to /usr/bin/"
+            fi
+            
+            # Create WireGuard config directory
+            sudo mkdir -p mnt/rootfs/etc/wireguard
+            sudo chmod 700 mnt/rootfs/etc/wireguard
+            echo "WireGuard config directory created at /etc/wireguard/"
+          else
+            echo "WireGuard tools not found in artifacts, skipping installation"
+          fi
+          
+          # Set permissions
+          sudo chmod -R 755 mnt/rootfs/kvmapp
+          
+          # Verify installation
+          echo "Verifying installation..."
+          ls -la mnt/rootfs/kvmapp/
+          
+          # Cleanup - these commands may fail if the device was not set up,
+          # so we handle errors gracefully with logging
+          echo "Cleaning up..."
+          sudo umount mnt/rootfs
+          
+          # Detach loop device if it exists
+          if [ -n "$LOOP_DEV" ]; then
+            sudo losetup -d "$LOOP_DEV" 2>/dev/null || echo "Note: Loop device cleanup skipped (may already be detached)"
+          fi
+          
+          # Remove kpartx mappings if they exist
+          sudo kpartx -d base-image.img 2>/dev/null || echo "Note: kpartx cleanup skipped (mappings may not exist)"
+          
+          echo "kvmapp injection complete"
+
+      - name: Compress final OS image
+        run: |
+          echo "Compressing final OS image..."
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          OUTPUT_NAME="nanokvm-os-existing-${VERSION}.img"
+          mv base-image.img "$OUTPUT_NAME"
+          xz -9 -T0 "$OUTPUT_NAME"
+          
+          echo "Final image created:"
+          ls -la "${OUTPUT_NAME}.xz"
+          
+          # Generate checksum
+          sha256sum "${OUTPUT_NAME}.xz" > "${OUTPUT_NAME}.xz.sha256"
+          cat "${OUTPUT_NAME}.xz.sha256"
+          
+          # Save output name for later steps
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
+
+      - name: Upload OS image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanokvm-os-existing-${{ github.sha }}
+          path: |
+            nanokvm-os-*.img.xz
+            nanokvm-os-*.img.xz.sha256
+          if-no-files-found: error
+
+      - name: Upload OS image to Azure Storage
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          # Skip if connection string is not set
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "AZURE_STORAGE_CONNECTION_STRING not set, skipping Azure upload"
+            exit 0
+          fi
+          
+          # Install Azure CLI if not present
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+          
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
+          
+          echo "Uploading OS image to Azure Storage..."
+          echo "Container: $CONTAINER"
+          echo "Path: $UPLOAD_PATH"
+          
+          # Upload OS image
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz" \
+            --file "${OUTPUT_NAME}.xz" \
+            --overwrite
+          
+          # Upload checksum
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz.sha256" \
+            --file "${OUTPUT_NAME}.xz.sha256" \
+            --overwrite
+          
+          echo "OS image uploaded successfully to Azure Storage"
+          echo "Download URL: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/${OUTPUT_NAME}.xz"

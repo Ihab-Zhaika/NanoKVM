@@ -1,0 +1,27 @@
+# Docker Compose configuration for NanoKVM build environment
+# Usage: docker-compose run --rm build
+
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+      - ./output:/workspace/output
+    command: build-nanokvm
+    environment:
+      - WORKSPACE=/workspace
+      - OUTPUT_DIR=/workspace/output
+
+  # Interactive shell for debugging
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/workspace
+      - ./output:/workspace/output
+    command: /bin/bash
+    stdin_open: true
+    tty: true

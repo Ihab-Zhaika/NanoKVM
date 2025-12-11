@@ -1,0 +1,172 @@
+name: Build Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'docker-build.sh'
+      - '.github/workflows/docker-build.yml'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild Docker image (ignore cache)'
+        required: false
+        default: false
+        type: boolean
+  # Allow this workflow to be called by other workflows
+  workflow_call:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild Docker image'
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      image:
+        description: 'Full Docker image name with tag'
+        value: ${{ jobs.build-docker.outputs.image }}
+      image_tag:
+        description: 'Docker image tag'
+        value: ${{ jobs.build-docker.outputs.tag }}
+    secrets:
+      ACR_REGISTRY:
+        required: true
+      ACR_USERNAME:
+        required: true
+      ACR_PASSWORD:
+        required: true
+      TOOLCHAIN_URL:
+        required: false
+
+concurrency:
+  group: docker-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ACR_IMAGE_NAME: nanokvm-builder
+  ACR_IMAGE_TAG: latest
+
+jobs:
+  build-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image-info.outputs.image }}
+      tag: ${{ steps.image-info.outputs.tag }}
+      exists: ${{ steps.check-image.outputs.exists }}
+
+    steps:
+      - name: Debug secrets availability (docker-build)
+        run: |
+          echo "=== Debugging Secrets in docker-build.yml ==="
+          echo "This workflow was triggered by: ${{ github.event_name }}"
+          echo ""
+          if [ -z "${{ secrets.ACR_REGISTRY }}" ]; then
+            echo "❌ ACR_REGISTRY secret is NOT populated in docker-build workflow!"
+          else
+            echo "✅ ACR_REGISTRY secret is populated"
+            echo "   Length: $(echo -n '${{ secrets.ACR_REGISTRY }}' | wc -c) characters"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_USERNAME }}" ]; then
+            echo "❌ ACR_USERNAME secret is NOT populated!"
+          else
+            echo "✅ ACR_USERNAME secret is populated"
+          fi
+          echo ""
+          if [ -z "${{ secrets.ACR_PASSWORD }}" ]; then
+            echo "❌ ACR_PASSWORD secret is NOT populated!"
+          else
+            echo "✅ ACR_PASSWORD secret is populated"
+          fi
+          echo ""
+          echo "Input force_rebuild: ${{ inputs.force_rebuild }}"
+          echo "=================================="
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        id: image-info
+        env:
+          REGISTRY: ${{ secrets.ACR_REGISTRY }}
+        run: |
+          echo "=== Generating Image Metadata ==="
+          echo "REGISTRY env var: '$REGISTRY'"
+          echo "ACR_IMAGE_NAME env var: '$ACR_IMAGE_NAME'"
+          echo "ACR_IMAGE_TAG env var: '$ACR_IMAGE_TAG'"
+          echo ""
+          if [ -z "$REGISTRY" ]; then
+            echo "ERROR: ACR_REGISTRY secret is not set or not passed to this workflow"
+            echo "If this is a workflow_call, ensure secrets are passed correctly"
+            exit 1
+          fi
+          IMAGE="${REGISTRY}/${ACR_IMAGE_NAME}:${ACR_IMAGE_TAG}"
+          echo "Constructed IMAGE: ${IMAGE}"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "tag=${ACR_IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "Outputs set:"
+          echo "  image=${IMAGE}"
+          echo "  tag=${ACR_IMAGE_TAG}"
+          echo "  registry=${REGISTRY}"
+          echo "=================================="
+
+      - name: Check if image exists in registry
+        id: check-image
+        run: |
+          IMAGE="${{ steps.image-info.outputs.image }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
+            echo "ERROR: Invalid image reference: $IMAGE"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Image already exists in registry: $IMAGE"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image not found in registry, will build: $IMAGE"
+          fi
+
+      - name: Build and push Docker image
+        if: steps.check-image.outputs.exists != 'true' || inputs.force_rebuild == true
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ env.ACR_IMAGE_TAG }}
+            ${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            TOOLCHAIN_URL=${{ secrets.TOOLCHAIN_URL }}
+          cache-from: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.ACR_REGISTRY }}/${{ env.ACR_IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Verify image is available
+        run: |
+          IMAGE="${{ steps.image-info.outputs.image }}"
+          if [ -z "$IMAGE" ] || [ "$IMAGE" = "/:latest" ] || [ "$IMAGE" = "/nanokvm-builder:latest" ]; then
+            echo "ERROR: Invalid image reference, cannot verify"
+            exit 1
+          fi
+          echo "Verifying image is available..."
+          docker pull "$IMAGE"
+          echo "Image verification successful"

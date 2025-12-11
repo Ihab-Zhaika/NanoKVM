@@ -1,0 +1,466 @@
+name: Build NanoKVM from scratch (Buildroot)
+
+# This workflow builds a complete NanoKVM OS image from scratch using LicheeRV Nano SDK
+# It includes WireGuard and any custom packages specified in the configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_wireguard:
+        description: 'Include WireGuard VPN client'
+        required: false
+        default: true
+        type: boolean
+      include_tailscale:
+        description: 'Include Tailscale VPN client'
+        required: false
+        default: true
+        type: boolean
+      custom_packages:
+        description: 'Additional Buildroot packages (comma-separated)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: buildroot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  LICHEERVNANO_SDK_REPO: https://github.com/sipeed/LicheeRV-Nano-Build.git
+  LICHEERVNANO_SDK_BRANCH: main
+  # Azure Container Registry
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+  ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+  ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+  # Azure Storage
+  AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+  AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+
+jobs:
+  # First, build or reuse the Buildroot Docker environment
+  buildroot-docker:
+    name: Prepare Buildroot Docker environment
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.set-image.outputs.image }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        if: ${{ env.ACR_REGISTRY != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Check if Buildroot image exists
+        id: check-image
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+        run: |
+          IMAGE_NAME="${ACR_REGISTRY}/nanokvm-buildroot:latest"
+          if docker manifest inspect "$IMAGE_NAME" > /dev/null 2>&1; then
+            echo "Image exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Image does not exist"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Buildroot Dockerfile
+        if: steps.check-image.outputs.exists != 'true'
+        run: |
+          cat > Dockerfile.buildroot << 'EOF'
+          FROM ubuntu:22.04
+
+          ENV DEBIAN_FRONTEND=noninteractive
+          ENV TZ=UTC
+
+          # Install Buildroot dependencies
+          RUN apt-get update && apt-get install -y \
+              build-essential \
+              git \
+              wget \
+              curl \
+              unzip \
+              rsync \
+              cpio \
+              python3 \
+              python3-pip \
+              bc \
+              bison \
+              flex \
+              libssl-dev \
+              libelf-dev \
+              libncurses-dev \
+              file \
+              dosfstools \
+              mtools \
+              genimage \
+              u-boot-tools \
+              device-tree-compiler \
+              libconfuse-dev \
+              && rm -rf /var/lib/apt/lists/*
+
+          # Clone LicheeRV Nano SDK
+          WORKDIR /sdk
+          RUN git clone --depth 1 https://github.com/sipeed/LicheeRV-Nano-Build.git . || \
+              git clone https://github.com/sipeed/LicheeRV-Nano-Build.git .
+
+          # Pre-download toolchain to speed up builds
+          RUN if [ -f "build.sh" ]; then \
+                bash -c "source build.sh && download_toolchain" || true; \
+              fi
+
+          WORKDIR /workspace
+          EOF
+
+      - name: Build and push Buildroot Docker image
+        if: steps.check-image.outputs.exists != 'true'
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+        run: |
+          IMAGE_NAME="${ACR_REGISTRY}/nanokvm-buildroot:latest"
+          docker build -f Dockerfile.buildroot -t "$IMAGE_NAME" .
+          docker push "$IMAGE_NAME"
+          echo "Buildroot Docker image pushed to $IMAGE_NAME"
+
+      - name: Set output image name
+        id: set-image
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+        run: |
+          IMAGE_NAME="${ACR_REGISTRY}/nanokvm-buildroot:latest"
+          echo "image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+
+  # Build kvmapp components (same as pr-build.yml)
+  build-kvmapp:
+    name: Build kvmapp components
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential curl wget xz-utils patchelf file
+
+      - name: Download RISC-V musl toolchain
+        run: |
+          MIRRORS=(
+            "${{ secrets.TOOLCHAIN_URL }}"
+            "https://musl.cc/riscv64-linux-musl-cross.tgz"
+          )
+          
+          TOOLCHAIN_DIR="/opt/toolchain"
+          sudo mkdir -p "$TOOLCHAIN_DIR"
+          
+          for URL in "${MIRRORS[@]}"; do
+            [ -z "$URL" ] && continue
+            if curl -fSL --retry 3 --connect-timeout 30 -o /tmp/toolchain.tgz "$URL"; then
+              sudo tar -xzf /tmp/toolchain.tgz -C "$TOOLCHAIN_DIR"
+              break
+            fi
+          done
+          
+          TOOLCHAIN_BIN=$(find "$TOOLCHAIN_DIR" -name "riscv64-linux-musl-gcc" -type f | head -1 | xargs dirname)
+          echo "$TOOLCHAIN_BIN" >> $GITHUB_PATH
+          echo "TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> $GITHUB_ENV
+
+      - name: Build frontend
+        run: |
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build Go server
+        run: |
+          echo "Building Go server for RISC-V..."
+          cd server
+          
+          # Set cross-compilation environment
+          export CGO_ENABLED=1
+          export GOOS=linux
+          export GOARCH=riscv64
+          export CC="${TOOLCHAIN_BIN}/riscv64-linux-musl-gcc"
+          # Use standard RISC-V flags compatible with musl.cc toolchain
+          # Note: T-Head specific flags like -mcpu=c906fdv require T-Head's custom toolchain
+          export CGO_CFLAGS="-march=rv64gc -mabi=lp64d"
+          
+          echo "CC=$CC"
+          echo "CGO_CFLAGS=$CGO_CFLAGS"
+          echo "GOOS=$GOOS"
+          echo "GOARCH=$GOARCH"
+          
+          # Build the binary
+          go build -buildvcs=false -o NanoKVM-Server -v
+          
+          if [ ! -f "NanoKVM-Server" ]; then
+            echo "ERROR: Server build failed - binary not found"
+            exit 1
+          fi
+          
+          # Patch RPATH for dynamic library loading
+          patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
+          
+          echo "Server built successfully"
+          file NanoKVM-Server
+
+      - name: Package kvmapp
+        run: |
+          echo "Packaging kvmapp..."
+          mkdir -p output/kvmapp/server/web
+          
+          # Copy frontend
+          if [ -d "web/dist" ]; then
+            cp -r web/dist/* output/kvmapp/server/web/
+          fi
+          
+          # Copy server binary
+          if [ -f "server/NanoKVM-Server" ]; then
+            cp server/NanoKVM-Server output/kvmapp/
+          fi
+          
+          # Copy dynamic libraries if they exist
+          if [ -d "server/dl_lib" ]; then
+            cp -r server/dl_lib output/kvmapp/
+          fi
+          
+          # Copy system files if they exist
+          if [ -d "support/system" ]; then
+            cp -r support/system/* output/kvmapp/ 2>/dev/null || true
+          fi
+          
+          cd output
+          tar -czf nanokvm-kvmapp.tar.gz -C kvmapp .
+          
+          echo "kvmapp packaged successfully"
+          ls -la nanokvm-kvmapp.tar.gz
+
+      - name: Upload kvmapp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kvmapp-scratch-${{ github.sha }}
+          path: output/nanokvm-kvmapp.tar.gz
+
+  # Build the full OS image from scratch using Buildroot
+  build-scratch-image:
+    name: Build from scratch with Buildroot
+    needs: [buildroot-docker, build-kvmapp]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # Buildroot builds can take a long time
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download kvmapp artifact
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: kvmapp-scratch-${{ github.sha }}
+          path: ./artifacts
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Create Buildroot configuration overlay
+        run: |
+          mkdir -p buildroot-overlay/etc/wireguard
+          chmod 700 buildroot-overlay/etc/wireguard
+          
+          # Create custom Buildroot config fragment
+          cat > buildroot-config-fragment << 'EOF'
+          # NanoKVM custom configuration
+          
+          # WireGuard support
+          BR2_PACKAGE_WIREGUARD_LINUX_COMPAT=y
+          BR2_PACKAGE_WIREGUARD_TOOLS=y
+          
+          # Tailscale (if available in Buildroot)
+          # BR2_PACKAGE_TAILSCALE=y
+          
+          # Network utilities
+          BR2_PACKAGE_IPROUTE2=y
+          BR2_PACKAGE_IPTABLES=y
+          BR2_PACKAGE_IPUTILS=y
+          
+          # SSH server
+          BR2_PACKAGE_DROPBEAR=y
+          
+          # Useful utilities
+          BR2_PACKAGE_NANO=y
+          BR2_PACKAGE_HTOP=y
+          BR2_PACKAGE_CURL=y
+          EOF
+          
+          # Add custom packages if specified
+          if [ -n "${{ github.event.inputs.custom_packages }}" ]; then
+            IFS=',' read -ra PKGS <<< "${{ github.event.inputs.custom_packages }}"
+            for pkg in "${PKGS[@]}"; do
+              pkg=$(echo "$pkg" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+              echo "BR2_PACKAGE_${pkg}=y" >> buildroot-config-fragment
+            done
+          fi
+          
+          echo "Buildroot config fragment:"
+          cat buildroot-config-fragment
+
+      - name: Build OS image with Buildroot
+        env:
+          DOCKER_IMAGE: ${{ needs.buildroot-docker.outputs.image }}
+        run: |
+          echo "Building with Docker image: $DOCKER_IMAGE"
+          
+          # Create build script
+          cat > build-scratch.sh << 'BUILDSCRIPT'
+          #!/bin/bash
+          set -e
+          
+          cd /sdk
+          
+          # Apply custom configuration
+          if [ -f /workspace/buildroot-config-fragment ]; then
+            cat /workspace/buildroot-config-fragment >> buildroot/configs/licheervnano_defconfig || true
+          fi
+          
+          # Build the image
+          ./build.sh licheervnano || {
+            # If build.sh doesn't exist, try manual build
+            cd buildroot
+            make licheervnano_defconfig
+            make -j$(nproc)
+          }
+          
+          # Find and copy output image
+          find . -name "*.img" -o -name "*.img.xz" | head -5
+          
+          OUTPUT_IMG=$(find . -name "sdcard*.img" -o -name "*.img" | head -1)
+          if [ -n "$OUTPUT_IMG" ]; then
+            cp "$OUTPUT_IMG" /workspace/output/nanokvm-scratch.img
+            echo "Image built successfully: $OUTPUT_IMG"
+          else
+            echo "ERROR: No output image found"
+            exit 1
+          fi
+          BUILDSCRIPT
+          chmod +x build-scratch.sh
+          
+          mkdir -p output
+          
+          # Run Buildroot in Docker
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -v "$(pwd)/output:/workspace/output" \
+            -e FORCE_UNSAFE_CONFIGURE=1 \
+            "$DOCKER_IMAGE" \
+            /workspace/build-scratch.sh
+
+      - name: Inject kvmapp into scratch image
+        run: |
+          if [ ! -f "output/nanokvm-scratch.img" ]; then
+            echo "ERROR: Scratch image not found"
+            exit 1
+          fi
+          
+          # Mount and inject kvmapp
+          LOOP_DEV=$(sudo losetup --find --show --partscan output/nanokvm-scratch.img)
+          sleep 2
+          
+          ROOTFS_PART="${LOOP_DEV}p2"
+          [ ! -b "$ROOTFS_PART" ] && ROOTFS_PART="${LOOP_DEV}p1"
+          
+          mkdir -p mnt/rootfs
+          sudo mount "$ROOTFS_PART" mnt/rootfs || sudo mount "$LOOP_DEV" mnt/rootfs
+          
+          # Install kvmapp
+          sudo mkdir -p mnt/rootfs/kvmapp
+          sudo tar -xzf artifacts/nanokvm-kvmapp.tar.gz -C mnt/rootfs/kvmapp
+          sudo chmod -R 755 mnt/rootfs/kvmapp
+          
+          # Cleanup
+          sudo umount mnt/rootfs
+          sudo losetup -d "$LOOP_DEV"
+          
+          echo "kvmapp injected into scratch image"
+
+      - name: Compress scratch image
+        run: |
+          VERSION="scratch-$(echo ${{ github.sha }} | cut -c1-7)"
+          OUTPUT_NAME="nanokvm-os-scratch-${VERSION}.img"
+          mv output/nanokvm-scratch.img "$OUTPUT_NAME"
+          xz -9 -T0 "$OUTPUT_NAME"
+          
+          sha256sum "${OUTPUT_NAME}.xz" > "${OUTPUT_NAME}.xz.sha256"
+          
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> $GITHUB_ENV
+          echo "Scratch image created: ${OUTPUT_NAME}.xz"
+          ls -la "${OUTPUT_NAME}.xz"
+
+      - name: Upload scratch OS image
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanokvm-os-scratch-${{ github.sha }}
+          path: |
+            nanokvm-os-scratch-*.img.xz
+            nanokvm-os-scratch-*.img.xz.sha256
+          if-no-files-found: error
+
+      - name: Upload to Azure Storage
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "Azure Storage not configured, skipping upload"
+            exit 0
+          fi
+          
+          if ! command -v az &> /dev/null; then
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+          
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
+          VERSION="scratch-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
+          
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz" \
+            --file "${OUTPUT_NAME}.xz" \
+            --overwrite
+          
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/${OUTPUT_NAME}.xz.sha256" \
+            --file "${OUTPUT_NAME}.xz.sha256" \
+            --overwrite
+          
+          echo "Scratch image uploaded to Azure Storage"
+          echo "Path: ${UPLOAD_PATH}/${OUTPUT_NAME}.xz"
