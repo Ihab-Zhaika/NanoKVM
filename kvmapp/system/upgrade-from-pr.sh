@@ -30,6 +30,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Debug mode (set DEBUG=1 to enable)
+DEBUG="${DEBUG:-0}"
+
 # Logging functions
 log_info() {
     echo "${GREEN}[INFO]${NC} $1"
@@ -43,11 +46,17 @@ log_error() {
     echo "${RED}[ERROR]${NC} $1"
 }
 
+log_debug() {
+    if [ "$DEBUG" = "1" ]; then
+        echo "${YELLOW}[DEBUG]${NC} $1"
+    fi
+}
+
 # Display usage information
 usage() {
     echo "NanoKVM PR Upgrade Script"
     echo ""
-    echo "Usage: $0 <artifact_url_or_path>"
+    echo "Usage: $0 [options] <artifact_url_or_path>"
     echo ""
     echo "Arguments:"
     echo "  artifact_url_or_path  Local path or URL to the kvmapp update tarball"
@@ -55,10 +64,15 @@ usage() {
     echo "Examples:"
     echo "  $0 /tmp/nanokvm-kvmapp-update.tar.gz"
     echo "  $0 https://storage.example.com/branch/version/nanokvm-kvmapp-update.tar.gz"
+    echo "  $0 --debug /tmp/nanokvm-kvmapp-update.tar.gz"
     echo ""
     echo "Options:"
     echo "  --help, -h    Show this help message"
+    echo "  --debug, -d   Enable debug mode with verbose output"
     echo "  --rollback    Rollback to the previous backup"
+    echo ""
+    echo "Environment variables:"
+    echo "  DEBUG=1       Enable debug mode (alternative to --debug flag)"
     echo ""
     exit 1
 }
@@ -159,12 +173,15 @@ download_artifact() {
     OUTPUT="$2"
     
     log_info "Downloading artifact from: $URL"
+    log_debug "Output file: $OUTPUT"
     
     # Try wget first (more common on embedded systems), then curl
     # Include security flags: timeout and limited redirects
     if command -v wget > /dev/null 2>&1; then
+        log_debug "Using wget for download"
         wget -q --timeout=60 --max-redirect=5 -O "$OUTPUT" "$URL"
     elif command -v curl > /dev/null 2>&1; then
+        log_debug "Using curl for download"
         curl -fsSL --max-time 60 --max-redirs 5 -o "$OUTPUT" "$URL"
     else
         log_error "Neither wget nor curl is available"
@@ -176,6 +193,10 @@ download_artifact() {
         log_error "Failed to download artifact"
         exit 1
     fi
+    
+    # Debug: show file info
+    log_debug "Downloaded file size: $(ls -la "$OUTPUT" 2>/dev/null | awk '{print $5}') bytes"
+    log_debug "Downloaded file type: $(file "$OUTPUT" 2>/dev/null || echo 'file command not available')"
     
     log_info "Download completed"
 }
@@ -192,13 +213,34 @@ install_kvmapp() {
         exit 1
     fi
     
+    # Debug: show file info before extraction
+    log_debug "Tarball path: $TARBALL"
+    log_debug "Tarball size: $(ls -la "$TARBALL" 2>/dev/null | awk '{print $5}') bytes"
+    log_debug "Tarball type: $(file "$TARBALL" 2>/dev/null || echo 'file command not available')"
+    log_debug "First bytes (hex): $(head -c 16 "$TARBALL" 2>/dev/null | od -A x -t x1z | head -1 || echo 'od command not available')"
+    
     # Create temp extraction directory
     rm -rf "$TEMP_DIR"
     mkdir -p "$TEMP_DIR"
+    log_debug "Created temp directory: $TEMP_DIR"
     
     # Extract tarball with security flags to prevent directory traversal
     log_info "Extracting tarball..."
-    tar --no-absolute-names -xzf "$TARBALL" -C "$TEMP_DIR"
+    log_debug "Running: tar --no-absolute-names -xzf $TARBALL -C $TEMP_DIR"
+    
+    # Capture extraction output for debugging
+    if [ "$DEBUG" = "1" ]; then
+        tar --no-absolute-names -xzvf "$TARBALL" -C "$TEMP_DIR" 2>&1
+    else
+        tar --no-absolute-names -xzf "$TARBALL" -C "$TEMP_DIR"
+    fi
+    
+    # Debug: show extracted contents
+    log_debug "Extracted contents:"
+    if [ "$DEBUG" = "1" ]; then
+        ls -la "$TEMP_DIR" 2>/dev/null || echo "  (empty or not accessible)"
+        find "$TEMP_DIR" -maxdepth 2 -type f 2>/dev/null | head -20
+    fi
     
     # Verify extraction
     if [ ! -d "$TEMP_DIR" ] || [ -z "$(ls -A "$TEMP_DIR")" ]; then
@@ -216,6 +258,12 @@ install_kvmapp() {
     log_info "Installing new files..."
     mkdir -p "$KVMAPP_DIR"
     cp -a "$TEMP_DIR"/* "$KVMAPP_DIR"/
+    
+    # Debug: show installed contents
+    log_debug "Installed contents in $KVMAPP_DIR:"
+    if [ "$DEBUG" = "1" ]; then
+        ls -la "$KVMAPP_DIR" 2>/dev/null || echo "  (empty or not accessible)"
+    fi
     
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
@@ -346,6 +394,13 @@ main() {
         exit 0
     fi
     
+    # Check for debug flag
+    if [ "$1" = "--debug" ] || [ "$1" = "-d" ]; then
+        DEBUG=1
+        shift
+        log_debug "Debug mode enabled"
+    fi
+    
     # Check arguments
     if [ $# -lt 1 ]; then
         log_error "Missing argument: artifact URL or path"
@@ -361,20 +416,28 @@ main() {
     log_info "NanoKVM PR Upgrade Script"
     log_info "========================================"
     log_info ""
+    log_debug "Script started with argument: $ARTIFACT"
+    log_debug "Current working directory: $(pwd)"
+    log_debug "System info: $(uname -a 2>/dev/null || echo 'uname not available')"
     
     # Determine if artifact is URL or local path
     TARBALL=""
     if echo "$ARTIFACT" | grep -qE '^https?://'; then
         # It's a URL, download it
+        log_debug "Detected URL input"
         TARBALL="/tmp/nanokvm-pr-update.tar.gz"
         download_artifact "$ARTIFACT" "$TARBALL"
     else
         # It's a local path
+        log_debug "Detected local path input"
         TARBALL="$ARTIFACT"
         if [ ! -f "$TARBALL" ]; then
             log_error "File not found: $TARBALL"
             exit 1
         fi
+        # Debug: show file info for local file
+        log_debug "Local file size: $(ls -la "$TARBALL" 2>/dev/null | awk '{print $5}') bytes"
+        log_debug "Local file type: $(file "$TARBALL" 2>/dev/null || echo 'file command not available')"
     fi
     
     # Stop services
@@ -397,6 +460,7 @@ main() {
     
     # Cleanup downloaded file if we downloaded it
     if echo "$ARTIFACT" | grep -qE '^https?://'; then
+        log_debug "Cleaning up downloaded file: $TARBALL"
         rm -f "$TARBALL"
     fi
     
