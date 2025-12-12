@@ -398,6 +398,45 @@ xzcat nanokvm-os.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 python3 /kvmapp/system/update-nanokvm.py
 ```
 
+### Testing PR Builds on NanoKVM
+
+When you have a pull request, the CI builds artifacts that can be tested directly on your NanoKVM device. Use the `upgrade-from-pr.sh` script for safe upgrades:
+
+1. **Download the artifact from the PR:**
+   - Go to the PR's "Checks" tab and find the workflow run
+   - Download the `nanokvm-kvmapp-{sha}.tar.gz` artifact
+   - Transfer to your NanoKVM via SCP: `scp nanokvm-kvmapp-update.tar.gz root@<nanokvm-ip>:/tmp/`
+
+2. **Run the upgrade script:**
+   ```bash
+   # SSH into your NanoKVM
+   ssh root@<nanokvm-ip>
+   
+   # Run the upgrade from a local file
+   /kvmapp/system/upgrade-from-pr.sh /tmp/nanokvm-kvmapp-update.tar.gz
+   
+   # Or directly from a URL (e.g., Azure Storage)
+   /kvmapp/system/upgrade-from-pr.sh "https://storage.example.com/branch/version/nanokvm-kvmapp-update.tar.gz"
+   ```
+
+3. **Rollback if needed:**
+   ```bash
+   /kvmapp/system/upgrade-from-pr.sh --rollback
+   ```
+
+**What the upgrade script does:**
+- Safely stops running services (NanoKVM-Server and kvm_system)
+- Creates a timestamped backup of the current installation
+- Extracts and installs the new files
+- Sets correct permissions
+- Restarts services
+- Verifies the installation
+
+**Safety features:**
+- Keeps up to 3 most recent backups for rollback
+- Verifies services are stopped before installation
+- Can rollback to previous version if issues occur
+
 ## Troubleshooting
 
 ### Go Build Fails with CGO Errors
