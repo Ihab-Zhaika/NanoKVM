@@ -469,6 +469,117 @@ If the Docker build fails due to toolchain download issues:
 docker build --no-cache -t nanokvm-builder .
 ```
 
+### Verifying Flashed Image Has Your Changes
+
+After flashing an image built from the workflow, if you don't see new features (like virtual audio) in the UI, follow these steps:
+
+#### 1. Verify You're SSH'd into the Correct NanoKVM
+
+```bash
+# Check the device hostname and IP
+hostname
+ip addr show
+
+# Verify it's the NanoKVM OS
+cat /etc/os-release
+# Should show something like: NAME="LicheeRV Nano" or similar
+
+# Check the architecture (should be RISC-V)
+uname -a
+# Should show: riscv64 in the output
+```
+
+#### 2. Verify the kvmapp Was Updated
+
+```bash
+# Check if the kvmapp directory exists and has recent files
+ls -la /kvmapp/
+
+# Check the NanoKVM-Server binary modification time
+ls -la /kvmapp/NanoKVM-Server
+
+# Verify the web frontend contains new features
+# Look for virtual-audio in the built JavaScript files
+grep -r "virtualAudio" /kvmapp/server/web/ 2>/dev/null && echo "✓ Virtual Audio UI found" || echo "✗ Virtual Audio UI not found"
+
+# Check if the NanoKVM-Server is running
+ps aux | grep NanoKVM
+```
+
+#### 3. Verify the Service Is Running Correctly
+
+```bash
+# Check service status
+/etc/init.d/S95nanokvm status
+
+# Restart the service to pick up changes
+/etc/init.d/S95nanokvm restart
+
+# Check the service logs for errors
+tail -f /var/log/nanokvm.log
+# or
+journalctl -u nanokvm -f 2>/dev/null || cat /tmp/nanokvm*.log 2>/dev/null
+```
+
+#### 4. Clear Browser Cache
+
+New UI changes may not appear due to browser caching:
+- Hard refresh: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (Mac)
+- Clear browser cache for the NanoKVM site
+- Try accessing in incognito/private mode
+
+#### 5. Verify Workflow Build Artifacts
+
+The workflow produces detailed logs showing what was included. Check the GitHub Actions workflow run:
+- Look at the "Package kvmapp" step output
+- Verify "server/web/" appears in the contents listing
+- Check the "Inject kvmapp and extras into OS image" step for verification messages
+
+If the workflow shows `✓ server/web/ present` but you still don't see changes:
+1. Ensure you're flashing the correct artifact (download from the workflow run, not a cached version)
+2. Verify the SD card flash completed successfully (use Balena Etcher's verification feature)
+3. Try a different SD card
+
+#### 6. Compare Server Binary
+
+Check if the server binary on your device matches what the workflow built:
+```bash
+# On your NanoKVM, get the server binary details
+md5sum /kvmapp/NanoKVM-Server
+file /kvmapp/NanoKVM-Server
+
+# The workflow logs also show the binary info
+# file NanoKVM-Server should show: ELF 64-bit LSB executable, UCB RISC-V
+```
+
+#### 7. Manual Update Alternative
+
+If flashing doesn't work, try manually updating via SSH:
+
+```bash
+# On your computer, transfer the kvmapp update package
+scp nanokvm-kvmapp-update.tar.gz root@<nanokvm-ip>:/tmp/
+
+# SSH into NanoKVM
+ssh root@<nanokvm-ip>
+
+# Stop the service
+/etc/init.d/S95nanokvm stop
+
+# Backup current installation
+mv /kvmapp /kvmapp.bak
+
+# Extract new package
+mkdir /kvmapp
+tar -xzf /tmp/nanokvm-kvmapp-update.tar.gz -C /kvmapp
+
+# Set permissions
+chmod -R 755 /kvmapp
+
+# Restart service
+/etc/init.d/S95nanokvm restart
+```
+
 ## References
 
 - [NanoKVM Wiki](https://wiki.sipeed.com/nanokvm)

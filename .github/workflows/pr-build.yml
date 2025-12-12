@@ -291,11 +291,17 @@ jobs:
           if [ -d "web/dist" ]; then
             mkdir -p "$KVMAPP_DIR/server/web"
             cp -r web/dist/* "$KVMAPP_DIR/server/web/"
+            echo "Copied frontend to server/web/"
+          else
+            echo "WARNING: web/dist not found - frontend will not be included!"
           fi
           
           # Copy server binary
           if [ -f "server/NanoKVM-Server" ]; then
             cp server/NanoKVM-Server "$KVMAPP_DIR/"
+            echo "Copied NanoKVM-Server binary"
+          else
+            echo "WARNING: server/NanoKVM-Server not found - server will not be included!"
           fi
           
           # Copy dynamic libraries if they exist
@@ -314,7 +320,8 @@ jobs:
             cp tools/nanokvm_update_edid/edidctl output/tools/
           fi
           
-          echo "kvmapp packaged successfully"
+          echo ""
+          echo "=== kvmapp Package Summary ==="
           echo "Contents of kvmapp:"
           ls -la "$KVMAPP_DIR/"
           if [ -d "$KVMAPP_DIR/system" ]; then
@@ -324,6 +331,21 @@ jobs:
           if [ -d "$KVMAPP_DIR/system/init.d" ]; then
             echo "Contents of kvmapp/system/init.d:"
             ls -la "$KVMAPP_DIR/system/init.d/"
+          fi
+          
+          # Verify critical new features are included
+          echo ""
+          echo "=== Verifying New Features ==="
+          if [ -d "$KVMAPP_DIR/server/web" ]; then
+            echo "✓ Frontend directory present"
+            # Check for virtual audio feature in bundled JS files
+            if grep -r "virtualAudio" "$KVMAPP_DIR/server/web/" >/dev/null 2>&1; then
+              echo "✓ Virtual Audio UI components included"
+            else
+              echo "✗ Virtual Audio UI components NOT found in frontend bundle"
+            fi
+          else
+            echo "✗ Frontend directory missing!"
           fi
 
       - name: Create update package
