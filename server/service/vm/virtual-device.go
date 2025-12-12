@@ -274,6 +274,8 @@ func (s *Service) GetAudioLevels(c *gin.Context) {
 
 	audioInLevel := 0
 	audioOutLevel := 0
+	audioInMuted := false
+	audioOutMuted := false
 
 	// Check if audio devices are mounted
 	audioInMounted, _ := isDeviceExist(virtualAudioIn)
@@ -287,6 +289,11 @@ func (s *Service) GetAudioLevels(c *gin.Context) {
 			_, _ = fmt.Sscanf(string(out), "%d", &level)
 			audioInLevel = level
 		}
+		// Check mute state
+		out, err = exec.Command("sh", "-c", "amixer -c 0 sget Capture 2>/dev/null | grep -o '\\[off\\]' | head -1").Output()
+		if err == nil && len(out) > 0 {
+			audioInMuted = true
+		}
 	}
 
 	// Get audio output level using amixer (playback)
@@ -297,11 +304,59 @@ func (s *Service) GetAudioLevels(c *gin.Context) {
 			_, _ = fmt.Sscanf(string(out), "%d", &level)
 			audioOutLevel = level
 		}
+		// Check mute state
+		out, err = exec.Command("sh", "-c", "amixer -c 0 sget Master 2>/dev/null | grep -o '\\[off\\]' | head -1").Output()
+		if err == nil && len(out) > 0 {
+			audioOutMuted = true
+		}
 	}
 
 	rsp.OkRspWithData(c, &proto.GetAudioLevelsRsp{
 		AudioInLevel:  audioInLevel,
 		AudioOutLevel: audioOutLevel,
+		AudioInMuted:  audioInMuted,
+		AudioOutMuted: audioOutMuted,
 	})
-	log.Debugf("get audio levels: in=%d, out=%d", audioInLevel, audioOutLevel)
+	log.Debugf("get audio levels: in=%d, out=%d, inMuted=%v, outMuted=%v", audioInLevel, audioOutLevel, audioInMuted, audioOutMuted)
+}
+
+func (s *Service) SetAudioMute(c *gin.Context) {
+	var req proto.SetAudioMuteReq
+	var rsp proto.Response
+
+	if err := proto.ParseFormRequest(c, &req); err != nil {
+		rsp.ErrRsp(c, -1, "invalid argument")
+		return
+	}
+
+	var command string
+	switch req.Device {
+	case "audioIn":
+		if req.Muted {
+			command = "amixer -c 0 sset Capture mute 2>/dev/null"
+		} else {
+			command = "amixer -c 0 sset Capture unmute 2>/dev/null"
+		}
+	case "audioOut":
+		if req.Muted {
+			command = "amixer -c 0 sset Master mute 2>/dev/null"
+		} else {
+			command = "amixer -c 0 sset Master unmute 2>/dev/null"
+		}
+	default:
+		rsp.ErrRsp(c, -2, "invalid device")
+		return
+	}
+
+	err := exec.Command("sh", "-c", command).Run()
+	if err != nil {
+		log.Errorf("failed to set mute state: %s", err)
+		rsp.ErrRsp(c, -3, "failed to set mute state")
+		return
+	}
+
+	rsp.OkRspWithData(c, &proto.SetAudioMuteRsp{
+		Muted: req.Muted,
+	})
+	log.Debugf("set audio mute: device=%s, muted=%v", req.Device, req.Muted)
 }

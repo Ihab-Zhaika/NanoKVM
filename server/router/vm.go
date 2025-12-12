@@ -31,6 +31,7 @@ func vmRouter(r *gin.Engine) {
 	api.POST("/vm/device/virtual/audio/enable", service.EnableVirtualAudio)   // enable virtual audio
 	api.POST("/vm/device/virtual/audio/disable", service.DisableVirtualAudio) // disable virtual audio
 	api.GET("/vm/device/virtual/audio/levels", service.GetAudioLevels)        // get audio levels
+	api.POST("/vm/device/virtual/audio/mute", service.SetAudioMute)           // mute/unmute audio
 
 	api.GET("/vm/memory/limit", service.GetMemoryLimit)  // get memory limit
 	api.POST("/vm/memory/limit", service.SetMemoryLimit) // set memory limit

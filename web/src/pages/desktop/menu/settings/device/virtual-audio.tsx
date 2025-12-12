@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { Switch, Tooltip, Progress } from 'antd';
-import { CircleAlertIcon, Mic, Volume2 } from 'lucide-react';
+import { Switch, Tooltip, Progress, Button } from 'antd';
+import { CircleAlertIcon, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import * as api from '@/api/virtual-device.ts';
@@ -11,9 +11,11 @@ export const VirtualAudio = () => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [isAudioInOn, setIsAudioInOn] = useState(false);
   const [isAudioOutOn, setIsAudioOutOn] = useState(false);
-  const [loading, setLoading] = useState(''); // '' | 'enabled' | 'audioIn' | 'audioOut'
+  const [loading, setLoading] = useState(''); // '' | 'enabled' | 'audioIn' | 'audioOut' | 'muteIn' | 'muteOut'
   const [audioInLevel, setAudioInLevel] = useState(0);
   const [audioOutLevel, setAudioOutLevel] = useState(0);
+  const [audioInMuted, setAudioInMuted] = useState(false);
+  const [audioOutMuted, setAudioOutMuted] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -37,6 +39,8 @@ export const VirtualAudio = () => {
           if (rsp.code === 0) {
             setAudioInLevel(rsp.data.audioInLevel);
             setAudioOutLevel(rsp.data.audioOutLevel);
+            setAudioInMuted(rsp.data.audioInMuted);
+            setAudioOutMuted(rsp.data.audioOutMuted);
           }
         });
       };
@@ -51,6 +55,8 @@ export const VirtualAudio = () => {
       }
       setAudioInLevel(0);
       setAudioOutLevel(0);
+      setAudioInMuted(false);
+      setAudioOutMuted(false);
     }
 
     return () => {
@@ -109,6 +115,30 @@ export const VirtualAudio = () => {
       });
   }
 
+  function toggleMute(device: 'audioIn' | 'audioOut') {
+    if (loading) return;
+    setLoading(device === 'audioIn' ? 'muteIn' : 'muteOut');
+
+    const currentMuted = device === 'audioIn' ? audioInMuted : audioOutMuted;
+
+    api
+      .setAudioMute(device, !currentMuted)
+      .then((rsp) => {
+        if (rsp.code !== 0) {
+          return;
+        }
+
+        if (device === 'audioIn') {
+          setAudioInMuted(rsp.data.muted);
+        } else {
+          setAudioOutMuted(rsp.data.muted);
+        }
+      })
+      .finally(() => {
+        setLoading('');
+      });
+  }
+
   return (
     <>
       <div className="flex items-center justify-between">
@@ -142,19 +172,32 @@ export const VirtualAudio = () => {
           <div className="flex items-center justify-between pl-4">
             <div className="flex flex-col flex-1 mr-4">
               <div className="flex items-center space-x-2">
-                <Mic size={14} className="text-neutral-400" />
+                {audioInMuted ? (
+                  <MicOff size={14} className="text-red-500" />
+                ) : (
+                  <Mic size={14} className="text-neutral-400" />
+                )}
                 <span>{t('settings.device.virtualAudio.nanoInput')}</span>
               </div>
               <span className="text-xs text-neutral-500">
                 {t('settings.device.virtualAudio.nanoInputDesc')}
               </span>
               {isAudioInOn && (
-                <div className="mt-2">
+                <div className="mt-2 flex items-center space-x-2">
                   <Progress
-                    percent={audioInLevel}
+                    percent={audioInMuted ? 0 : audioInLevel}
                     size="small"
                     showInfo={false}
-                    strokeColor={audioInLevel > 80 ? '#ff4d4f' : audioInLevel > 50 ? '#faad14' : '#52c41a'}
+                    strokeColor={audioInMuted ? '#666' : (audioInLevel > 80 ? '#ff4d4f' : audioInLevel > 50 ? '#faad14' : '#52c41a')}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={audioInMuted ? <MicOff size={14} /> : <Mic size={14} />}
+                    onClick={() => toggleMute('audioIn')}
+                    loading={loading === 'muteIn'}
+                    className={audioInMuted ? 'text-red-500' : 'text-neutral-400'}
                   />
                 </div>
               )}
@@ -170,19 +213,32 @@ export const VirtualAudio = () => {
           <div className="flex items-center justify-between pl-4">
             <div className="flex flex-col flex-1 mr-4">
               <div className="flex items-center space-x-2">
-                <Volume2 size={14} className="text-neutral-400" />
+                {audioOutMuted ? (
+                  <VolumeX size={14} className="text-red-500" />
+                ) : (
+                  <Volume2 size={14} className="text-neutral-400" />
+                )}
                 <span>{t('settings.device.virtualAudio.nanoOutput')}</span>
               </div>
               <span className="text-xs text-neutral-500">
                 {t('settings.device.virtualAudio.nanoOutputDesc')}
               </span>
               {isAudioOutOn && (
-                <div className="mt-2">
+                <div className="mt-2 flex items-center space-x-2">
                   <Progress
-                    percent={audioOutLevel}
+                    percent={audioOutMuted ? 0 : audioOutLevel}
                     size="small"
                     showInfo={false}
-                    strokeColor={audioOutLevel > 80 ? '#ff4d4f' : audioOutLevel > 50 ? '#faad14' : '#52c41a'}
+                    strokeColor={audioOutMuted ? '#666' : (audioOutLevel > 80 ? '#ff4d4f' : audioOutLevel > 50 ? '#faad14' : '#52c41a')}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={audioOutMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                    onClick={() => toggleMute('audioOut')}
+                    loading={loading === 'muteOut'}
+                    className={audioOutMuted ? 'text-red-500' : 'text-neutral-400'}
                   />
                 </div>
               )}

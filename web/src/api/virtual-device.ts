@@ -28,3 +28,13 @@ export function disableVirtualAudio() {
 export function getAudioLevels() {
   return http.get('/api/vm/device/virtual/audio/levels');
 }
+
+// mute/unmute audio device
+export function setAudioMute(device: string, muted: boolean) {
+  const data = {
+    device,
+    muted
+  };
+
+  return http.post('/api/vm/device/virtual/audio/mute', data);
+}
