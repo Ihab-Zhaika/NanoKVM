@@ -291,11 +291,17 @@ jobs:
           if [ -d "web/dist" ]; then
             mkdir -p "$KVMAPP_DIR/server/web"
             cp -r web/dist/* "$KVMAPP_DIR/server/web/"
+            echo "Copied frontend to server/web/"
+          else
+            echo "WARNING: web/dist not found - frontend will not be included!"
           fi
           
           # Copy server binary
           if [ -f "server/NanoKVM-Server" ]; then
             cp server/NanoKVM-Server "$KVMAPP_DIR/"
+            echo "Copied NanoKVM-Server binary"
+          else
+            echo "WARNING: server/NanoKVM-Server not found - server will not be included!"
           fi
           
           # Copy dynamic libraries if they exist
@@ -314,7 +320,8 @@ jobs:
             cp tools/nanokvm_update_edid/edidctl output/tools/
           fi
           
-          echo "kvmapp packaged successfully"
+          echo ""
+          echo "=== kvmapp Package Summary ==="
           echo "Contents of kvmapp:"
           ls -la "$KVMAPP_DIR/"
           if [ -d "$KVMAPP_DIR/system" ]; then
@@ -324,6 +331,24 @@ jobs:
           if [ -d "$KVMAPP_DIR/system/init.d" ]; then
             echo "Contents of kvmapp/system/init.d:"
             ls -la "$KVMAPP_DIR/system/init.d/"
+          fi
+          
+          # Verify critical components are included
+          echo ""
+          echo "=== Verifying Build Components ==="
+          if [ -d "$KVMAPP_DIR/server/web" ]; then
+            echo "✓ Frontend directory present"
+            WEB_FILE_COUNT=$(find "$KVMAPP_DIR/server/web" -type f | wc -l)
+            echo "  Files in frontend: $WEB_FILE_COUNT"
+          else
+            echo "✗ Frontend directory missing!"
+          fi
+          
+          if [ -f "$KVMAPP_DIR/NanoKVM-Server" ]; then
+            echo "✓ NanoKVM-Server binary present"
+            echo "  $(file "$KVMAPP_DIR/NanoKVM-Server")"
+          else
+            echo "✗ NanoKVM-Server binary missing!"
           fi
 
       - name: Create update package

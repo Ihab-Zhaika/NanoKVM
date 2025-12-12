@@ -260,11 +260,17 @@ jobs:
           # Copy frontend
           if [ -d "web/dist" ]; then
             cp -r web/dist/* output/kvmapp/server/web/
+            echo "Copied frontend to server/web/"
+          else
+            echo "WARNING: web/dist not found - frontend will not be included!"
           fi
           
           # Copy server binary
           if [ -f "server/NanoKVM-Server" ]; then
             cp server/NanoKVM-Server output/kvmapp/
+            echo "Copied NanoKVM-Server binary"
+          else
+            echo "WARNING: server/NanoKVM-Server not found - server will not be included!"
           fi
           
           # Copy dynamic libraries if they exist
@@ -280,7 +286,8 @@ jobs:
           cd output
           tar -czf nanokvm-kvmapp.tar.gz -C kvmapp .
           
-          echo "kvmapp packaged successfully"
+          echo ""
+          echo "=== kvmapp Package Summary ==="
           echo "Contents of kvmapp:"
           ls -la kvmapp/
           if [ -d "kvmapp/system" ]; then
@@ -291,6 +298,24 @@ jobs:
             echo "Contents of kvmapp/system/init.d:"
             ls -la kvmapp/system/init.d/
           fi
+          
+          # Verify critical components are included
+          echo ""
+          echo "=== Verifying Build Components ==="
+          if [ -d "kvmapp/server/web" ]; then
+            echo "✓ Frontend directory present"
+            WEB_FILE_COUNT=$(find "kvmapp/server/web" -type f | wc -l)
+            echo "  Files in frontend: $WEB_FILE_COUNT"
+          else
+            echo "✗ Frontend directory missing!"
+          fi
+          
+          if [ -f "kvmapp/NanoKVM-Server" ]; then
+            echo "✓ NanoKVM-Server binary present"
+          else
+            echo "✗ NanoKVM-Server binary missing!"
+          fi
+          
           ls -la nanokvm-kvmapp.tar.gz
 
       - name: Upload kvmapp artifact
