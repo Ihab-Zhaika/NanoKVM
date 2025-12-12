@@ -23,3 +23,8 @@ export function enableVirtualAudio() {
 export function disableVirtualAudio() {
   return http.post('/api/vm/device/virtual/audio/disable');
 }
+
+// get audio levels
+export function getAudioLevels() {
+  return http.get('/api/vm/device/virtual/audio/levels');
+}

@@ -144,3 +144,8 @@ type GetWebTitleRsp struct {
 type SetTlsReq struct {
 	Enabled bool `validate:"omitempty"`
 }
+
+type GetAudioLevelsRsp struct {
+	AudioInLevel  int `json:"audioInLevel"`  // 0-100 percentage
+	AudioOutLevel int `json:"audioOutLevel"` // 0-100 percentage
+}

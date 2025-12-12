@@ -2,6 +2,7 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -266,4 +267,41 @@ func (s *Service) DisableVirtualAudio(c *gin.Context) {
 
 	rsp.OkRsp(c)
 	log.Debug("disable virtual audio")
+}
+
+func (s *Service) GetAudioLevels(c *gin.Context) {
+	var rsp proto.Response
+
+	audioInLevel := 0
+	audioOutLevel := 0
+
+	// Check if audio devices are mounted
+	audioInMounted, _ := isDeviceExist(virtualAudioIn)
+	audioOutMounted, _ := isDeviceExist(virtualAudioOut)
+
+	// Get audio input level using amixer (capture)
+	if audioInMounted {
+		out, err := exec.Command("sh", "-c", "amixer -c 0 sget Capture 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%'").Output()
+		if err == nil && len(out) > 0 {
+			level := 0
+			_, _ = fmt.Sscanf(string(out), "%d", &level)
+			audioInLevel = level
+		}
+	}
+
+	// Get audio output level using amixer (playback)
+	if audioOutMounted {
+		out, err := exec.Command("sh", "-c", "amixer -c 0 sget Master 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%'").Output()
+		if err == nil && len(out) > 0 {
+			level := 0
+			_, _ = fmt.Sscanf(string(out), "%d", &level)
+			audioOutLevel = level
+		}
+	}
+
+	rsp.OkRspWithData(c, &proto.GetAudioLevelsRsp{
+		AudioInLevel:  audioInLevel,
+		AudioOutLevel: audioOutLevel,
+	})
+	log.Debugf("get audio levels: in=%d, out=%d", audioInLevel, audioOutLevel)
 }
