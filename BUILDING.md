@@ -398,6 +398,39 @@ xzcat nanokvm-os.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 python3 /kvmapp/system/update-nanokvm.py
 ```
 
+### Using the SSH Installation Script
+
+For manual installation via SSH, use the `install-kvmapp.sh` script. This is the recommended method when you have a tarball and want to install it directly on the device:
+
+1. **Copy the tarball to your NanoKVM:**
+   ```bash
+   scp nanokvm-kvmapp-update.tar.gz root@<nanokvm-ip>:/tmp/
+   ```
+
+2. **SSH into the device and run the installation:**
+   ```bash
+   ssh root@<nanokvm-ip>
+   /kvmapp/system/install-kvmapp.sh /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
+3. **Rollback if needed:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --rollback
+   ```
+
+4. **List available backups:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --list-backups
+   ```
+
+**What the script does:**
+- Stops running services safely
+- Creates a timestamped backup of the current installation
+- Extracts and installs new files
+- Sets correct permissions on all files
+- Restarts services
+- Verifies the installation
+
 ### Testing PR Builds on NanoKVM
 
 When you have a pull request, the CI builds artifacts that can be tested directly on your NanoKVM device. Use the `upgrade-from-pr.sh` script for safe upgrades:
