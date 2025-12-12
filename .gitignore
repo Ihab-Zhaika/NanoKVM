@@ -4,6 +4,7 @@ pnpm-debug.log*
 web/node_modules
 web/dist
 web/web
+web/package-lock.json
 
 .DS_Store
 *.local

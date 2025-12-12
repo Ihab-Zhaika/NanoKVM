@@ -13,3 +13,28 @@ export function updateVirtualDevice(device: string) {
 
   return http.post('/api/vm/device/virtual', data);
 }
+
+// enable virtual audio feature
+export function enableVirtualAudio() {
+  return http.post('/api/vm/device/virtual/audio/enable');
+}
+
+// disable virtual audio feature
+export function disableVirtualAudio() {
+  return http.post('/api/vm/device/virtual/audio/disable');
+}
+
+// get audio levels
+export function getAudioLevels() {
+  return http.get('/api/vm/device/virtual/audio/levels');
+}
+
+// mute/unmute audio device
+export function setAudioMute(device: string, muted: boolean) {
+  const data = {
+    device,
+    muted
+  };
+
+  return http.post('/api/vm/device/virtual/audio/mute', data);
+}

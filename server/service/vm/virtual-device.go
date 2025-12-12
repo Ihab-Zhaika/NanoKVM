@@ -2,6 +2,7 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 
@@ -13,9 +14,12 @@ import (
 )
 
 const (
-	virtualNetwork = "/boot/usb.rndis0"
-	virtualMedia   = "/boot/usb.disk0"
-	virtualDisk    = "/boot/usb.disk1"
+	virtualNetwork    = "/boot/usb.rndis0"
+	virtualMedia      = "/boot/usb.disk0"
+	virtualDisk       = "/boot/usb.disk1"
+	virtualAudioIn    = "/boot/usb.audio_in"
+	virtualAudioOut   = "/boot/usb.audio_out"
+	virtualAudioFile  = "/boot/usb.audio"
 )
 
 var (
@@ -57,6 +61,34 @@ var (
 		"rm /boot/usb.disk1",
 		"/etc/init.d/S03usbdev start",
 	}
+
+	// Virtual Audio Input (NanoInput) - microphone from remote host's perspective
+	mountAudioInCommands = []string{
+		"touch /boot/usb.audio_in",
+		"/etc/init.d/S03usbdev stop",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	unmountAudioInCommands = []string{
+		"/etc/init.d/S03usbdev stop",
+		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/uac2.usb0",
+		"rm /boot/usb.audio_in",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	// Virtual Audio Output (NanoOutput) - speaker from remote host's perspective
+	mountAudioOutCommands = []string{
+		"touch /boot/usb.audio_out",
+		"/etc/init.d/S03usbdev stop",
+		"/etc/init.d/S03usbdev start",
+	}
+
+	unmountAudioOutCommands = []string{
+		"/etc/init.d/S03usbdev stop",
+		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/uac2.usb1",
+		"rm /boot/usb.audio_out",
+		"/etc/init.d/S03usbdev start",
+	}
 )
 
 func (s *Service) GetVirtualDevice(c *gin.Context) {
@@ -65,11 +97,17 @@ func (s *Service) GetVirtualDevice(c *gin.Context) {
 	network, _ := isDeviceExist(virtualNetwork)
 	media, _ := isDeviceExist(virtualMedia)
 	disk, _ := isDeviceExist(virtualDisk)
+	audioEnabled, _ := isDeviceExist(virtualAudioFile)
+	audioIn, _ := isDeviceExist(virtualAudioIn)
+	audioOut, _ := isDeviceExist(virtualAudioOut)
 
 	rsp.OkRspWithData(c, &proto.GetVirtualDeviceRsp{
-		Network: network,
-		Media:   media,
-		Disk:    disk,
+		Network:      network,
+		Media:        media,
+		Disk:         disk,
+		AudioEnabled: audioEnabled,
+		AudioIn:      audioIn,
+		AudioOut:     audioOut,
 	})
 	log.Debugf("get virtual device success")
 }
@@ -114,6 +152,24 @@ func (s *Service) UpdateVirtualDevice(c *gin.Context) {
 		} else {
 			commands = unmountDiskCommands
 		}
+	case "audioIn":
+		device = virtualAudioIn
+
+		exist, _ := isDeviceExist(device)
+		if !exist {
+			commands = mountAudioInCommands
+		} else {
+			commands = unmountAudioInCommands
+		}
+	case "audioOut":
+		device = virtualAudioOut
+
+		exist, _ := isDeviceExist(device)
+		if !exist {
+			commands = mountAudioOutCommands
+		} else {
+			commands = unmountAudioOutCommands
+		}
 	default:
 		rsp.ErrRsp(c, -2, "invalid arguments")
 		return
@@ -156,4 +212,151 @@ func isDeviceExist(device string) (bool, error) {
 
 	log.Errorf("check file %s err: %s", device, err)
 	return false, err
+}
+
+func (s *Service) EnableVirtualAudio(c *gin.Context) {
+	var rsp proto.Response
+
+	// Enable audio feature by creating marker file
+	file, err := os.Create(virtualAudioFile)
+	if err != nil {
+		log.Errorf("failed to create audio file: %s", err)
+		rsp.ErrRsp(c, -1, "failed to enable virtual audio")
+		return
+	}
+	file.Close()
+
+	rsp.OkRsp(c)
+	log.Debug("enable virtual audio")
+}
+
+func (s *Service) DisableVirtualAudio(c *gin.Context) {
+	var rsp proto.Response
+
+	h := hid.GetHid()
+	h.Lock()
+	h.CloseNoLock()
+	defer func() {
+		h.OpenNoLock()
+		h.Unlock()
+	}()
+
+	// Disable audio feature - unmount devices if mounted and remove marker files
+	audioInMounted, _ := isDeviceExist(virtualAudioIn)
+	audioOutMounted, _ := isDeviceExist(virtualAudioOut)
+
+	// Unmount audio devices if they are mounted
+	if audioInMounted || audioOutMounted {
+		for _, command := range unmountAudioInCommands {
+			_ = exec.Command("sh", "-c", command).Run()
+		}
+		for _, command := range unmountAudioOutCommands {
+			_ = exec.Command("sh", "-c", command).Run()
+		}
+	}
+
+	if err := os.Remove(virtualAudioFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio file: %s", err)
+	}
+	if err := os.Remove(virtualAudioIn); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio_in file: %s", err)
+	}
+	if err := os.Remove(virtualAudioOut); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Warnf("failed to remove audio_out file: %s", err)
+	}
+
+	rsp.OkRsp(c)
+	log.Debug("disable virtual audio")
+}
+
+func (s *Service) GetAudioLevels(c *gin.Context) {
+	var rsp proto.Response
+
+	audioInLevel := 0
+	audioOutLevel := 0
+	audioInMuted := false
+	audioOutMuted := false
+
+	// Check if audio devices are mounted
+	audioInMounted, _ := isDeviceExist(virtualAudioIn)
+	audioOutMounted, _ := isDeviceExist(virtualAudioOut)
+
+	// Get audio input level using amixer (capture)
+	if audioInMounted {
+		out, err := exec.Command("sh", "-c", "amixer -c 0 sget Capture 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%'").Output()
+		if err == nil && len(out) > 0 {
+			level := 0
+			_, _ = fmt.Sscanf(string(out), "%d", &level)
+			audioInLevel = level
+		}
+		// Check mute state
+		out, err = exec.Command("sh", "-c", "amixer -c 0 sget Capture 2>/dev/null | grep -o '\\[off\\]' | head -1").Output()
+		if err == nil && len(out) > 0 {
+			audioInMuted = true
+		}
+	}
+
+	// Get audio output level using amixer (playback)
+	if audioOutMounted {
+		out, err := exec.Command("sh", "-c", "amixer -c 0 sget Master 2>/dev/null | grep -o '[0-9]*%' | head -1 | tr -d '%'").Output()
+		if err == nil && len(out) > 0 {
+			level := 0
+			_, _ = fmt.Sscanf(string(out), "%d", &level)
+			audioOutLevel = level
+		}
+		// Check mute state
+		out, err = exec.Command("sh", "-c", "amixer -c 0 sget Master 2>/dev/null | grep -o '\\[off\\]' | head -1").Output()
+		if err == nil && len(out) > 0 {
+			audioOutMuted = true
+		}
+	}
+
+	rsp.OkRspWithData(c, &proto.GetAudioLevelsRsp{
+		AudioInLevel:  audioInLevel,
+		AudioOutLevel: audioOutLevel,
+		AudioInMuted:  audioInMuted,
+		AudioOutMuted: audioOutMuted,
+	})
+	log.Debugf("get audio levels: in=%d, out=%d, inMuted=%v, outMuted=%v", audioInLevel, audioOutLevel, audioInMuted, audioOutMuted)
+}
+
+func (s *Service) SetAudioMute(c *gin.Context) {
+	var req proto.SetAudioMuteReq
+	var rsp proto.Response
+
+	if err := proto.ParseFormRequest(c, &req); err != nil {
+		rsp.ErrRsp(c, -1, "invalid argument")
+		return
+	}
+
+	var command string
+	switch req.Device {
+	case "audioIn":
+		if req.Muted {
+			command = "amixer -c 0 sset Capture mute 2>/dev/null"
+		} else {
+			command = "amixer -c 0 sset Capture unmute 2>/dev/null"
+		}
+	case "audioOut":
+		if req.Muted {
+			command = "amixer -c 0 sset Master mute 2>/dev/null"
+		} else {
+			command = "amixer -c 0 sset Master unmute 2>/dev/null"
+		}
+	default:
+		rsp.ErrRsp(c, -2, "invalid device")
+		return
+	}
+
+	err := exec.Command("sh", "-c", command).Run()
+	if err != nil {
+		log.Errorf("failed to set mute state: %s", err)
+		rsp.ErrRsp(c, -3, "failed to set mute state")
+		return
+	}
+
+	rsp.OkRspWithData(c, &proto.SetAudioMuteRsp{
+		Muted: req.Muted,
+	})
+	log.Debugf("set audio mute: device=%s, muted=%v", req.Device, req.Muted)
 }

@@ -16,6 +16,7 @@ import { Reboot } from './reboot.tsx';
 import { Ssh } from './ssh.tsx';
 import { Tls } from './tls.tsx';
 import { Usb } from './usb/index.tsx';
+import { VirtualAudio } from './virtual-audio.tsx';
 import { Wifi } from './wifi.tsx';
 
 export const Device = () => {
@@ -42,6 +43,8 @@ export const Device = () => {
         <Hdmi />
 
         {hidMode === 'normal' ? <Usb/> : <HidMode />}
+
+        <VirtualAudio />
       </div>
       <Divider />
 
