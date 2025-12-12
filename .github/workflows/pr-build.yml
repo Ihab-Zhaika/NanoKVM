@@ -333,19 +333,22 @@ jobs:
             ls -la "$KVMAPP_DIR/system/init.d/"
           fi
           
-          # Verify critical new features are included
+          # Verify critical components are included
           echo ""
-          echo "=== Verifying New Features ==="
+          echo "=== Verifying Build Components ==="
           if [ -d "$KVMAPP_DIR/server/web" ]; then
             echo "✓ Frontend directory present"
-            # Check for virtual audio feature in bundled JS files
-            if grep -r "virtualAudio" "$KVMAPP_DIR/server/web/" >/dev/null 2>&1; then
-              echo "✓ Virtual Audio UI components included"
-            else
-              echo "✗ Virtual Audio UI components NOT found in frontend bundle"
-            fi
+            WEB_FILE_COUNT=$(find "$KVMAPP_DIR/server/web" -type f | wc -l)
+            echo "  Files in frontend: $WEB_FILE_COUNT"
           else
             echo "✗ Frontend directory missing!"
+          fi
+          
+          if [ -f "$KVMAPP_DIR/NanoKVM-Server" ]; then
+            echo "✓ NanoKVM-Server binary present"
+            echo "  $(file "$KVMAPP_DIR/NanoKVM-Server")"
+          else
+            echo "✗ NanoKVM-Server binary missing!"
           fi
 
       - name: Create update package

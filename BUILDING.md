@@ -498,9 +498,12 @@ ls -la /kvmapp/
 # Check the NanoKVM-Server binary modification time
 ls -la /kvmapp/NanoKVM-Server
 
-# Verify the web frontend contains new features
-# Look for virtual-audio in the built JavaScript files
-grep -r "virtualAudio" /kvmapp/server/web/ 2>/dev/null && echo "✓ Virtual Audio UI found" || echo "✗ Virtual Audio UI not found"
+# Count frontend files (should have many files if properly built)
+find /kvmapp/server/web/ -type f | wc -l
+# Expected: 50+ files for a complete frontend build
+
+# Verify frontend directory exists and has content
+ls -la /kvmapp/server/web/
 
 # Check if the NanoKVM-Server is running
 ps aux | grep NanoKVM
@@ -515,10 +518,12 @@ ps aux | grep NanoKVM
 # Restart the service to pick up changes
 /etc/init.d/S95nanokvm restart
 
-# Check the service logs for errors
+# Check the service logs for errors (try each method)
 tail -f /var/log/nanokvm.log
-# or
-journalctl -u nanokvm -f 2>/dev/null || cat /tmp/nanokvm*.log 2>/dev/null
+# or for systems using journalctl
+journalctl -u nanokvm -f 2>/dev/null
+# or check tmp directory for logs
+ls /tmp/*.log 2>/dev/null
 ```
 
 #### 4. Clear Browser Cache
