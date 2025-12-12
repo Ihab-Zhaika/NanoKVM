@@ -263,6 +263,30 @@ jobs:
           KVMAPP_DIR="output/kvmapp"
           mkdir -p "$KVMAPP_DIR"
           
+          # Copy essential kvmapp system files from repository
+          # These files are critical for NanoKVM to boot and function properly
+          if [ -d "kvmapp" ]; then
+            echo "Copying essential kvmapp system files..."
+            
+            # Copy kvm_system directory (contains kvm_stream binary for screen output)
+            if [ -d "kvmapp/kvm_system" ]; then
+              cp -r kvmapp/kvm_system "$KVMAPP_DIR/"
+              echo "Copied kvm_system/"
+            fi
+            
+            # Copy system directory (contains init scripts and kernel modules)
+            if [ -d "kvmapp/system" ]; then
+              cp -r kvmapp/system "$KVMAPP_DIR/"
+              echo "Copied system/ (init.d scripts and kernel modules)"
+            fi
+            
+            # Copy jpg_stream directory (contains S95nanokvm startup script)
+            if [ -d "kvmapp/jpg_stream" ]; then
+              cp -r kvmapp/jpg_stream "$KVMAPP_DIR/"
+              echo "Copied jpg_stream/"
+            fi
+          fi
+          
           # Copy frontend
           if [ -d "web/dist" ]; then
             mkdir -p "$KVMAPP_DIR/server/web"
@@ -279,7 +303,7 @@ jobs:
             cp -r server/dl_lib "$KVMAPP_DIR/"
           fi
           
-          # Copy system files if they exist
+          # Copy system files from support/system if they exist (legacy path)
           if [ -d "support/system" ]; then
             cp -r support/system/* "$KVMAPP_DIR/" 2>/dev/null || true
           fi
@@ -291,7 +315,16 @@ jobs:
           fi
           
           echo "kvmapp packaged successfully"
+          echo "Contents of kvmapp:"
           ls -la "$KVMAPP_DIR/"
+          if [ -d "$KVMAPP_DIR/system" ]; then
+            echo "Contents of kvmapp/system:"
+            ls -la "$KVMAPP_DIR/system/"
+          fi
+          if [ -d "$KVMAPP_DIR/system/init.d" ]; then
+            echo "Contents of kvmapp/system/init.d:"
+            ls -la "$KVMAPP_DIR/system/init.d/"
+          fi
 
       - name: Create update package
         run: |
@@ -441,16 +474,22 @@ jobs:
           mkdir -p mnt/rootfs
           sudo mount "$ROOTFS_PART" mnt/rootfs
           
-          # Backup existing kvmapp
+          # Extract new kvmapp - merge with existing instead of replacing
+          echo "Installing new kvmapp (merging with existing)..."
+          
+          # List existing kvmapp contents before update
           if [ -d "mnt/rootfs/kvmapp" ]; then
-            echo "Backing up existing kvmapp..."
-            sudo mv mnt/rootfs/kvmapp mnt/rootfs/kvmapp.bak
+            echo "Existing kvmapp contents:"
+            sudo ls -la mnt/rootfs/kvmapp/
           fi
           
-          # Extract new kvmapp
-          echo "Installing new kvmapp..."
+          # Extract new kvmapp on top of existing (merge approach)
+          # This preserves any files from base image that we don't provide
           sudo mkdir -p mnt/rootfs/kvmapp
           sudo tar -xzf artifacts/nanokvm-kvmapp-update.tar.gz -C mnt/rootfs/kvmapp
+          
+          echo "Updated kvmapp contents:"
+          sudo ls -la mnt/rootfs/kvmapp/
           
           # Install WireGuard tools if available
           if [ -d "build-artifacts/output/wireguard" ] || [ -d "build-artifacts/wireguard" ]; then
@@ -483,9 +522,45 @@ jobs:
           # Set permissions
           sudo chmod -R 755 mnt/rootfs/kvmapp
           
-          # Verify installation
+          # Verify installation - detailed check for critical files
           echo "Verifying installation..."
+          echo "=== kvmapp root ==="
           ls -la mnt/rootfs/kvmapp/
+          
+          # Verify critical directories exist
+          echo "=== Checking critical components ==="
+          if [ -d "mnt/rootfs/kvmapp/kvm_system" ]; then
+            echo "✓ kvm_system/ present"
+            ls -la mnt/rootfs/kvmapp/kvm_system/
+          else
+            echo "✗ WARNING: kvm_system/ missing - screen may not work!"
+          fi
+          
+          if [ -d "mnt/rootfs/kvmapp/system/init.d" ]; then
+            echo "✓ system/init.d/ present"
+            ls -la mnt/rootfs/kvmapp/system/init.d/
+          else
+            echo "✗ WARNING: system/init.d/ missing - boot scripts missing!"
+          fi
+          
+          if [ -d "mnt/rootfs/kvmapp/system/ko" ]; then
+            echo "✓ system/ko/ present"
+            ls -la mnt/rootfs/kvmapp/system/ko/
+          else
+            echo "✗ WARNING: system/ko/ missing - kernel modules missing!"
+          fi
+          
+          if [ -f "mnt/rootfs/kvmapp/NanoKVM-Server" ]; then
+            echo "✓ NanoKVM-Server present"
+          else
+            echo "✗ WARNING: NanoKVM-Server missing!"
+          fi
+          
+          if [ -d "mnt/rootfs/kvmapp/server/web" ]; then
+            echo "✓ server/web/ present"
+          else
+            echo "✗ WARNING: server/web/ missing!"
+          fi
           
           # Cleanup - these commands may fail if the device was not set up,
           # so we handle errors gracefully with logging
