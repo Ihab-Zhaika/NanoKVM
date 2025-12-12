@@ -233,6 +233,30 @@ jobs:
           echo "Packaging kvmapp..."
           mkdir -p output/kvmapp/server/web
           
+          # Copy essential kvmapp system files from repository
+          # These files are critical for NanoKVM to boot and function properly
+          if [ -d "kvmapp" ]; then
+            echo "Copying essential kvmapp system files..."
+            
+            # Copy kvm_system directory (contains kvm_stream binary for screen output)
+            if [ -d "kvmapp/kvm_system" ]; then
+              cp -r kvmapp/kvm_system output/kvmapp/
+              echo "Copied kvm_system/"
+            fi
+            
+            # Copy system directory (contains init scripts and kernel modules)
+            if [ -d "kvmapp/system" ]; then
+              cp -r kvmapp/system output/kvmapp/
+              echo "Copied system/ (init.d scripts and kernel modules)"
+            fi
+            
+            # Copy jpg_stream directory (contains S95nanokvm startup script)
+            if [ -d "kvmapp/jpg_stream" ]; then
+              cp -r kvmapp/jpg_stream output/kvmapp/
+              echo "Copied jpg_stream/"
+            fi
+          fi
+          
           # Copy frontend
           if [ -d "web/dist" ]; then
             cp -r web/dist/* output/kvmapp/server/web/
@@ -248,7 +272,7 @@ jobs:
             cp -r server/dl_lib output/kvmapp/
           fi
           
-          # Copy system files if they exist
+          # Copy system files from support/system if they exist (legacy path)
           if [ -d "support/system" ]; then
             cp -r support/system/* output/kvmapp/ 2>/dev/null || true
           fi
@@ -257,6 +281,16 @@ jobs:
           tar -czf nanokvm-kvmapp.tar.gz -C kvmapp .
           
           echo "kvmapp packaged successfully"
+          echo "Contents of kvmapp:"
+          ls -la kvmapp/
+          if [ -d "kvmapp/system" ]; then
+            echo "Contents of kvmapp/system:"
+            ls -la kvmapp/system/
+          fi
+          if [ -d "kvmapp/system/init.d" ]; then
+            echo "Contents of kvmapp/system/init.d:"
+            ls -la kvmapp/system/init.d/
+          fi
           ls -la nanokvm-kvmapp.tar.gz
 
       - name: Upload kvmapp artifact
