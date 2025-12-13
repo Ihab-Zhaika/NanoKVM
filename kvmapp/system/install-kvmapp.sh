@@ -234,35 +234,39 @@ download_package() {
     # Remove existing file if present
     rm -f "$OUTPUT_FILE" 2>/dev/null
     
-    # Try wget first (preferred for progress display), then curl
-    if command -v wget > /dev/null 2>&1; then
-        log_info "Using wget for download..."
-        if [ "$ASYNC_MODE" -eq 0 ]; then
-            # Show progress bar in sync mode
-            wget --progress=bar:force -O "$OUTPUT_FILE" "$URL" 2>&1
-        else
-            # No progress bar in async mode, just log
-            wget -q -O "$OUTPUT_FILE" "$URL" 2>&1
-        fi
-        DOWNLOAD_STATUS=$?
-    elif command -v curl > /dev/null 2>&1; then
+    # Prefer curl for HTTPS support (BusyBox wget may not support HTTPS)
+    # curl is more reliable for HTTPS URLs
+    if command -v curl > /dev/null 2>&1; then
         log_info "Using curl for download..."
         if [ "$ASYNC_MODE" -eq 0 ]; then
             # Show progress bar in sync mode
-            curl -L --progress-bar -o "$OUTPUT_FILE" "$URL"
+            curl -fL --progress-bar -o "$OUTPUT_FILE" "$URL"
         else
             # Silent in async mode
-            curl -sL -o "$OUTPUT_FILE" "$URL"
+            curl -fsL -o "$OUTPUT_FILE" "$URL"
+        fi
+        DOWNLOAD_STATUS=$?
+    elif command -v wget > /dev/null 2>&1; then
+        log_info "Using wget for download..."
+        # Use simple wget options compatible with BusyBox
+        # BusyBox wget doesn't support --progress or HTTPS well
+        if [ "$ASYNC_MODE" -eq 0 ]; then
+            # Basic wget without progress (BusyBox compatible)
+            wget -O "$OUTPUT_FILE" "$URL" 2>&1
+        else
+            # Quiet mode
+            wget -q -O "$OUTPUT_FILE" "$URL" 2>&1
         fi
         DOWNLOAD_STATUS=$?
     else
-        log_error "Neither wget nor curl is available for downloading"
+        log_error "Neither curl nor wget is available for downloading"
         write_status "FAILED: No download tool available" 100
         exit 1
     fi
     
     if [ "$DOWNLOAD_STATUS" -ne 0 ]; then
         log_error "Download failed with status: $DOWNLOAD_STATUS"
+        log_error "If using HTTPS URL, ensure curl is available (BusyBox wget may not support HTTPS)"
         write_status "FAILED: Download failed" 100
         rm -f "$OUTPUT_FILE" 2>/dev/null
         exit 1
@@ -394,12 +398,30 @@ install_kvmapp() {
         exit 1
     fi
     
+    # Get file info for debugging
+    FILE_SIZE=$(ls -la "$TARBALL" 2>/dev/null | awk '{print $5}')
+    log_info "Tarball size: $FILE_SIZE bytes"
+    
     # Verify it's a valid tarball (tar.gz)
+    # First check if file appears to be gzipped
+    if ! gzip -t "$TARBALL" 2>/dev/null; then
+        log_error "Invalid tarball: File is not a valid gzip archive"
+        log_error "File may be corrupted or not a .tar.gz file"
+        log_error "Try re-downloading the file or check file transfer"
+        # Show first few bytes for debugging
+        log_info "File header (hex): $(head -c 4 "$TARBALL" 2>/dev/null | od -A n -t x1 | tr -d ' ')"
+        write_status "FAILED: Invalid tarball (not gzip)" 100
+        exit 1
+    fi
+    
+    # Then verify tar can list contents
     if ! tar -tzf "$TARBALL" > /dev/null 2>&1; then
-        log_error "Invalid tarball (not a valid tar.gz file)"
+        log_error "Invalid tarball: Cannot read tar archive contents"
         write_status "FAILED: Invalid tarball" 100
         exit 1
     fi
+    
+    log_info "Tarball validation passed"
     
     # Remove old kvmapp
     if [ -d "$KVMAPP_DIR" ]; then

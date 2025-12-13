@@ -329,6 +329,13 @@ jobs:
       - name: Create update package
         run: |
           echo "Creating update package..."
+          
+          # Create version file with semantic version
+          # Use format: X.Y.Z-dev-<short-sha>
+          VERSION="2.3.0-dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "$VERSION" > output/kvmapp/version
+          echo "Version file created: $VERSION"
+          
           cd output
           tar -czf nanokvm-kvmapp-update.tar.gz -C kvmapp .
           
@@ -337,6 +344,10 @@ jobs:
           
           echo "Packages created:"
           ls -la *.tar.gz
+          
+          # Verify the tarball contains the version file
+          echo "Verifying package contents:"
+          tar -tzf nanokvm-kvmapp-update.tar.gz | head -20
 
       - name: Generate pre-configured install script
         env:
