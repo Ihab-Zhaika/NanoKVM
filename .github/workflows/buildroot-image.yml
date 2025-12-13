@@ -4,6 +4,11 @@ name: Build NanoKVM from scratch (Buildroot)
 # It includes WireGuard and any custom packages specified in the configuration
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/buildroot-image.yml'
+      - 'board/**'
+      - 'kvmapp/**'
   workflow_dispatch:
     inputs:
       include_wireguard:
@@ -78,7 +83,7 @@ jobs:
         if: steps.check-image.outputs.exists != 'true'
         run: |
           cat > Dockerfile.buildroot << 'EOF'
-          FROM ubuntu:22.04
+          FROM ubuntu:24.04
 
           ENV DEBIAN_FRONTEND=noninteractive
           ENV TZ=UTC
@@ -103,6 +108,7 @@ jobs:
               file \
               dosfstools \
               mtools \
+              genimage \
               u-boot-tools \
               device-tree-compiler \
               libconfuse-dev \
