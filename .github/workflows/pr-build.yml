@@ -350,37 +350,19 @@ jobs:
           tar -tzf nanokvm-kvmapp-update.tar.gz | head -20
 
       - name: Generate pre-configured install script
-        env:
-          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
         run: |
-          echo "Generating pre-configured install script..."
+          echo "Generating install scripts..."
           
-          # Determine the download URL based on Azure Storage settings
-          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
-          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
-          BRANCH_NAME="${{ github.ref_name }}"
-          
-          # The URL pattern - users need to replace <storage-account> with actual storage account name
-          # For now, we'll use a placeholder that can be configured
-          DOWNLOAD_URL="https://\${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${BRANCH_NAME}/${VERSION}/nanokvm-kvmapp-update.tar.gz"
-          
-          # Copy the install script and configure it with the download URL
+          # Copy the install script to output directory
           mkdir -p output/scripts
           cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp.sh
-          
-          # Replace the empty DEFAULT_PACKAGE_URL with the actual URL
-          # Using sed to update the placeholder
-          sed -i "s|^DEFAULT_PACKAGE_URL=\"\"|DEFAULT_PACKAGE_URL=\"${DOWNLOAD_URL}\"|" output/scripts/install-kvmapp.sh
           
           # Also create a version without the URL (for manual use)
           cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp-manual.sh
           
           echo "Install scripts generated:"
-          echo "  - install-kvmapp.sh (pre-configured with download URL)"
+          echo "  - install-kvmapp.sh (will be configured with download URL after Azure upload)"
           echo "  - install-kvmapp-manual.sh (requires --url or local file)"
-          
-          # Show the configured URL in the script
-          grep "DEFAULT_PACKAGE_URL" output/scripts/install-kvmapp.sh
           
           chmod +x output/scripts/*.sh
 
@@ -436,6 +418,10 @@ jobs:
           BRANCH_NAME="${{ github.ref_name }}"
           UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
           
+          # Extract storage account name from connection string
+          STORAGE_ACCOUNT=$(echo "$AZURE_STORAGE_CONNECTION_STRING" | sed -n 's/.*AccountName=\([^;]*\).*/\1/p')
+          echo "Storage Account: $STORAGE_ACCOUNT"
+          
           echo "Uploading artifacts to Azure Storage..."
           echo "Container: $CONTAINER"
           echo "Path: $UPLOAD_PATH"
@@ -454,7 +440,27 @@ jobs:
             --file output/nanokvm-artifacts.tar.gz \
             --overwrite
           
-          # Upload install scripts
+          # Generate SAS token for the kvmapp package (valid for 30 days)
+          EXPIRY_DATE=$(date -u -d "+30 days" '+%Y-%m-%dT%H:%MZ')
+          SAS_TOKEN=$(az storage blob generate-sas \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
+            --permissions r \
+            --expiry "$EXPIRY_DATE" \
+            --output tsv)
+          
+          # Construct the full download URL with SAS token
+          DOWNLOAD_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz?${SAS_TOKEN}"
+          echo "Download URL with SAS token generated"
+          
+          # Update the install script with the actual download URL (with SAS token)
+          if [ -f "output/scripts/install-kvmapp.sh" ]; then
+            # Replace the placeholder URL with the actual URL including SAS token
+            sed -i "s|^DEFAULT_PACKAGE_URL=.*|DEFAULT_PACKAGE_URL=\"${DOWNLOAD_URL}\"|" output/scripts/install-kvmapp.sh
+            echo "Updated install script with download URL"
+          fi
+          
+          # Upload install scripts (after updating with SAS URL)
           if [ -d "output/scripts" ]; then
             echo "Uploading install scripts..."
             for script in output/scripts/*.sh; do
@@ -470,14 +476,32 @@ jobs:
             done
           fi
           
+          # Generate SAS token for the install script itself
+          SCRIPT_SAS_TOKEN=$(az storage blob generate-sas \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/install-kvmapp.sh" \
+            --permissions r \
+            --expiry "$EXPIRY_DATE" \
+            --output tsv)
+          
+          SCRIPT_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/install-kvmapp.sh?${SCRIPT_SAS_TOKEN}"
+          
           echo ""
-          echo "Artifacts uploaded successfully to Azure Storage"
-          echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
+          echo "=========================================="
+          echo "Artifacts uploaded successfully!"
+          echo "=========================================="
           echo ""
-          echo "To upgrade your NanoKVM, download and run the install script:"
-          echo "  wget https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/install-kvmapp.sh"
-          echo "  chmod +x install-kvmapp.sh"
-          echo "  ./install-kvmapp.sh"
+          echo "To upgrade your NanoKVM, run these commands on the device:"
+          echo ""
+          echo "  curl -fL -o /tmp/install-kvmapp.sh '${SCRIPT_URL}'"
+          echo "  chmod +x /tmp/install-kvmapp.sh"
+          echo "  /tmp/install-kvmapp.sh"
+          echo ""
+          echo "Or for async mode (survives SSH disconnect):"
+          echo "  /tmp/install-kvmapp.sh --async"
+          echo ""
+          echo "SAS tokens valid until: $EXPIRY_DATE"
+          echo "=========================================="
 
   build-os-image:
     name: Build flashable OS image (existing base)
