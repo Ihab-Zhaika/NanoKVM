@@ -26,6 +26,7 @@ set -e
 KVMAPP_DIR="/kvmapp"
 BACKUP_DIR="/root/kvmapp-backup"
 SERVICE_SCRIPT="/etc/init.d/S95nanokvm"
+VERSION_FILE="/kvmapp/version"
 MAX_BACKUPS=3
 
 # Colors (may not work on all terminals)
@@ -58,14 +59,16 @@ Arguments:
   tarball_path    Path to the kvmapp update tarball (e.g., /tmp/nanokvm-kvmapp-update.tar.gz)
 
 Options:
-  --help, -h      Show this help message
-  --rollback      Restore from the most recent backup
-  --list-backups  List available backups
+  --help, -h           Show this help message
+  --rollback           Restore from the most recent backup
+  --list-backups       List available backups
+  --existing-version   Show the currently installed version
 
 Examples:
   $0 /tmp/nanokvm-kvmapp-update.tar.gz
   $0 --rollback
   $0 --list-backups
+  $0 --existing-version
 
 Steps to update your NanoKVM:
   1. Build or download the kvmapp tarball
@@ -75,6 +78,37 @@ Steps to update your NanoKVM:
 
 EOF
     exit 1
+}
+
+# Get the currently installed version
+get_existing_version() {
+    if [ -f "$VERSION_FILE" ]; then
+        tr -d '\n' < "$VERSION_FILE" 2>/dev/null
+    else
+        echo "unknown"
+    fi
+}
+
+# Get version from tarball
+get_tarball_version() {
+    TARBALL="$1"
+    if [ -f "$TARBALL" ]; then
+        # Extract version file from tarball and read it
+        VERSION=$(tar -xzf "$TARBALL" -O version 2>/dev/null | tr -d '\n')
+        if [ -n "$VERSION" ]; then
+            echo "$VERSION"
+        else
+            echo "unknown"
+        fi
+    else
+        echo "unknown"
+    fi
+}
+
+# Show existing version
+show_existing_version() {
+    VERSION=$(get_existing_version)
+    log_info "Currently installed version: $VERSION"
 }
 
 # Check if running as root
@@ -341,6 +375,12 @@ main() {
         exit 0
     fi
     
+    # Handle existing version check
+    if [ "$1" = "--existing-version" ]; then
+        show_existing_version
+        exit 0
+    fi
+    
     TARBALL="$1"
     
     check_root
@@ -359,6 +399,13 @@ main() {
         exit 1
     fi
     
+    # Get versions and display update message
+    EXISTING_VERSION=$(get_existing_version)
+    NEW_VERSION=$(get_tarball_version "$TARBALL")
+    log_info "Updating from version: $EXISTING_VERSION"
+    log_info "Updating to version:   $NEW_VERSION"
+    log_info ""
+    
     stop_services
     create_backup
     install_kvmapp "$TARBALL"
@@ -369,6 +416,7 @@ main() {
     log_info ""
     log_info "========================================"
     log_info "Installation completed!"
+    log_info "Updated from $EXISTING_VERSION to $NEW_VERSION"
     log_info "========================================"
     log_info ""
     log_info "If you have issues, rollback with:"

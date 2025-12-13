@@ -413,17 +413,23 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
    /kvmapp/system/install-kvmapp.sh /tmp/nanokvm-kvmapp-update.tar.gz
    ```
 
-3. **Rollback if needed:**
+3. **Check currently installed version:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --existing-version
+   ```
+
+4. **Rollback if needed:**
    ```bash
    /kvmapp/system/install-kvmapp.sh --rollback
    ```
 
-4. **List available backups:**
+5. **List available backups:**
    ```bash
    /kvmapp/system/install-kvmapp.sh --list-backups
    ```
 
 **What the script does:**
+- Shows "updating from X to Y" version information during installation
 - Stops running services safely
 - Creates a timestamped backup of the current installation
 - Extracts and installs new files
