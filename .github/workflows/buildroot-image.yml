@@ -437,8 +437,9 @@ jobs:
             mkdir -p buildroot/board/sipeed/nanokvm
             cp /workspace/board/sipeed/nanokvm/linux-uac2.config buildroot/board/sipeed/nanokvm/
             
-            # Add kernel fragment to buildroot config
-            echo 'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL)/board/sipeed/nanokvm/linux-uac2.config"' >> buildroot/configs/licheervnano_defconfig || true
+            # Add kernel fragment to buildroot config using the correct path
+            # The fragment is now in buildroot/board, not BR2_EXTERNAL
+            echo 'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="board/sipeed/nanokvm/linux-uac2.config"' >> buildroot/configs/licheervnano_defconfig || true
           fi
           
           # Build the image
