@@ -7,9 +7,16 @@ case "$1" in
     
     # Load UAC2 module if available
     if [ -f /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/function/usb_f_uac2.ko ]; then
-        modprobe usb_f_uac2 && echo "UAC2 module loaded"  || echo "Failed to load UAC2"
+        if modprobe usb_f_uac2; then
+            echo "UAC2 module loaded"
+            logger -t "S02modules" "UAC2 module loaded successfully"
+        else
+            echo "Failed to load UAC2"
+            logger -t "S02modules" "ERROR: Failed to load UAC2 module"
+        fi
     else
         echo "WARNING: UAC2 module not found - virtual audio disabled"
+        logger -t "S02modules" "WARNING: UAC2 module not found at /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/function/usb_f_uac2.ko"
     fi
     
     # Load other USB gadget functions as needed

@@ -135,7 +135,7 @@ start_usb_dev(){
         echo 48000 > functions/uac2.usb0/c_srate       # Sample rate: 48kHz
         echo 3 > functions/uac2.usb0/c_chmask           # Stereo (channels 0+1)
         echo 2 > functions/uac2.usb0/c_ssize            # 16-bit samples
-        echo 0 > functions/uac2.usb0/p_srate            # No playback
+        echo 0 > functions/uac2.usb0/p_srate            # No playback (disable playback functionality)
         echo 0 > functions/uac2.usb0/p_chmask
         echo 0 > functions/uac2.usb0/p_ssize
         echo "NanoKVM Audio Input" > functions/uac2.usb0/function_name
@@ -152,7 +152,7 @@ start_usb_dev(){
         echo 48000 > functions/uac2.usb1/p_srate        # Sample rate: 48kHz
         echo 3 > functions/uac2.usb1/p_chmask            # Stereo
         echo 2 > functions/uac2.usb1/p_ssize             # 16-bit samples
-        echo 0 > functions/uac2.usb1/c_srate             # No capture
+        echo 0 > functions/uac2.usb1/c_srate             # No capture (disable capture functionality)
         echo 0 > functions/uac2.usb1/c_chmask
         echo 0 > functions/uac2.usb1/c_ssize
         echo "NanoKVM Audio Output" > functions/uac2.usb1/function_name
@@ -162,6 +162,7 @@ start_usb_dev(){
 
     echo "USB Gadget Configuration Summary:"
     echo "Configured functions:"
+    # List symbolic links (^l) which represent configured USB functions
     ls -la /sys/kernel/config/usb_gadget/g0/configs/c.1/ 2>/dev/null | grep "^l" || echo "No functions configured"
 
     if [ ! -e /boot/udc.disable ]; then

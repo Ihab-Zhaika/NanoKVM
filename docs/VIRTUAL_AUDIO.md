@@ -228,7 +228,7 @@ speaker-test -D "NanoKVM Audio Output" -c 2 -t wav
 
 Use this checklist to verify virtual audio is working correctly:
 
-- [ ] Kernel module exists: `ls /lib/modules/$(uname -r)/**/usb_f_uac2.ko`
+- [ ] Kernel module exists: `find /lib/modules/$(uname -r) -name usb_f_uac2.ko`
 - [ ] Module is loaded: `lsmod | grep uac2`
 - [ ] Marker files created: `ls /boot/usb.audio*`
 - [ ] UAC2 functions configured: `ls /sys/kernel/config/usb_gadget/g0/functions/ | grep uac2`
