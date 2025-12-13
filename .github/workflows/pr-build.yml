@@ -268,11 +268,13 @@ jobs:
           if [ -d "kvmapp" ]; then
             echo "Copying essential kvmapp system files..."
             
-            # Copy kvm_system directory (contains kvm_stream binary for screen output)
-            if [ -d "kvmapp/kvm_system" ]; then
-              cp -r kvmapp/kvm_system "$KVMAPP_DIR/"
-              echo "Copied kvm_system/"
-            fi
+            # NOTE: kvm_system directory contains placeholder files only
+            # The actual kvm_system binary must be cross-compiled separately
+            # We skip copying it to avoid overwriting working binaries on the device
+            # if [ -d "kvmapp/kvm_system" ]; then
+            #   cp -r kvmapp/kvm_system "$KVMAPP_DIR/"
+            #   echo "Copied kvm_system/"
+            # fi
             
             # Copy system directory (contains init scripts and kernel modules)
             if [ -d "kvmapp/system" ]; then
@@ -287,20 +289,26 @@ jobs:
             fi
           fi
           
-          # Copy frontend
+          # Copy frontend - must be at /kvmapp/server/web/ for the Go server
           if [ -d "web/dist" ]; then
             mkdir -p "$KVMAPP_DIR/server/web"
             cp -r web/dist/* "$KVMAPP_DIR/server/web/"
+            echo "Copied web frontend to server/web/"
           fi
           
-          # Copy server binary
+          # Copy server binary - must be at /kvmapp/server/NanoKVM-Server
+          # The S95nanokvm script copies /kvmapp/server to /tmp/server and runs from there
           if [ -f "server/NanoKVM-Server" ]; then
-            cp server/NanoKVM-Server "$KVMAPP_DIR/"
+            mkdir -p "$KVMAPP_DIR/server"
+            cp server/NanoKVM-Server "$KVMAPP_DIR/server/"
+            echo "Copied NanoKVM-Server to server/"
           fi
           
           # Copy dynamic libraries if they exist
           if [ -d "server/dl_lib" ]; then
-            cp -r server/dl_lib "$KVMAPP_DIR/"
+            mkdir -p "$KVMAPP_DIR/server"
+            cp -r server/dl_lib "$KVMAPP_DIR/server/"
+            echo "Copied dl_lib/ to server/"
           fi
           
           # Copy system files from support/system if they exist (legacy path)
@@ -317,6 +325,14 @@ jobs:
           echo "kvmapp packaged successfully"
           echo "Contents of kvmapp:"
           ls -la "$KVMAPP_DIR/"
+          if [ -d "$KVMAPP_DIR/server" ]; then
+            echo "Contents of kvmapp/server:"
+            ls -la "$KVMAPP_DIR/server/"
+          fi
+          if [ -d "$KVMAPP_DIR/kvm_system" ]; then
+            echo "Contents of kvmapp/kvm_system:"
+            ls -la "$KVMAPP_DIR/kvm_system/"
+          fi
           if [ -d "$KVMAPP_DIR/system" ]; then
             echo "Contents of kvmapp/system:"
             ls -la "$KVMAPP_DIR/system/"
@@ -329,14 +345,53 @@ jobs:
       - name: Create update package
         run: |
           echo "Creating update package..."
+          
+          # Create version file with semantic version
+          # Use format: X.Y.Z-dev-<short-sha>
+          VERSION="2.3.0-dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "$VERSION" > output/kvmapp/version
+          echo "Version file created: $VERSION"
+          
           cd output
-          tar -czf nanokvm-kvmapp-update.tar.gz -C kvmapp .
+          
+          # Create packages WITH kvmapp/ prefix directory (matching native Sipeed format)
+          # Native update extracts to cache dir, gets "kvmapp/" subdir, then moves to /kvmapp
+          
+          # Create tar.gz package (legacy) - with kvmapp/ prefix
+          tar -czf nanokvm-kvmapp-update.tar.gz kvmapp
+          
+          # Create ZIP package (preferred) - with kvmapp/ prefix  
+          zip -r nanokvm-kvmapp-update.zip kvmapp
           
           # Create full artifacts package
           tar -czf nanokvm-artifacts.tar.gz kvmapp tools
           
           echo "Packages created:"
-          ls -la *.tar.gz
+          ls -la *.tar.gz *.zip
+          
+          # Verify the packages contain the version file and correct structure
+          echo "Verifying tar.gz package contents (should have kvmapp/ prefix):"
+          tar -tzf nanokvm-kvmapp-update.tar.gz | head -20
+          echo ""
+          echo "Verifying ZIP package contents (should have kvmapp/ prefix):"
+          unzip -l nanokvm-kvmapp-update.zip | head -20
+
+      - name: Generate pre-configured install script
+        run: |
+          echo "Generating install scripts..."
+          
+          # Copy the install script to output directory
+          mkdir -p output/scripts
+          cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp.sh
+          
+          # Also create a version without the URL (for manual use)
+          cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp-manual.sh
+          
+          echo "Install scripts generated:"
+          echo "  - install-kvmapp.sh (will be configured with download URL after Azure upload)"
+          echo "  - install-kvmapp-manual.sh (requires --url or local file)"
+          
+          chmod +x output/scripts/*.sh
 
       - name: List build artifacts
         run: |
@@ -344,13 +399,19 @@ jobs:
           ls -la output/
           echo ""
           echo "Packages:"
-          ls -la output/*.tar.gz || true
+          ls -la output/*.tar.gz output/*.zip || true
+          echo ""
+          echo "Scripts:"
+          ls -la output/scripts/ || true
 
       - name: Upload kvmapp update package
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-kvmapp-${{ github.sha }}
-          path: output/nanokvm-kvmapp-update.tar.gz
+          path: |
+            output/nanokvm-kvmapp-update.tar.gz
+            output/nanokvm-kvmapp-update.zip
+            output/scripts/
           if-no-files-found: error
 
       - name: Upload build artifacts
@@ -359,8 +420,10 @@ jobs:
           name: nanokvm-build-${{ github.sha }}
           path: |
             output/nanokvm-artifacts.tar.gz
+            output/nanokvm-kvmapp-update.zip
             output/kvmapp/
             output/tools/
+            output/scripts/
           if-no-files-found: error
 
       - name: Upload artifacts to Azure Storage
@@ -384,15 +447,26 @@ jobs:
           BRANCH_NAME="${{ github.ref_name }}"
           UPLOAD_PATH="${BRANCH_NAME}/${VERSION}"
           
+          # Extract storage account name from connection string
+          STORAGE_ACCOUNT=$(echo "$AZURE_STORAGE_CONNECTION_STRING" | sed -n 's/.*AccountName=\([^;]*\).*/\1/p')
+          echo "Storage Account: $STORAGE_ACCOUNT"
+          
           echo "Uploading artifacts to Azure Storage..."
           echo "Container: $CONTAINER"
           echo "Path: $UPLOAD_PATH"
           
-          # Upload kvmapp package
+          # Upload kvmapp tar.gz package (legacy)
           az storage blob upload \
             --container-name "$CONTAINER" \
             --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
             --file output/nanokvm-kvmapp-update.tar.gz \
+            --overwrite
+          
+          # Upload kvmapp ZIP package (preferred)
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.zip" \
+            --file output/nanokvm-kvmapp-update.zip \
             --overwrite
           
           # Upload full artifacts package
@@ -402,8 +476,68 @@ jobs:
             --file output/nanokvm-artifacts.tar.gz \
             --overwrite
           
-          echo "Artifacts uploaded successfully to Azure Storage"
-          echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
+          # Generate SAS token for the ZIP package (valid for 30 days)
+          EXPIRY_DATE=$(date -u -d "+30 days" '+%Y-%m-%dT%H:%MZ')
+          SAS_TOKEN=$(az storage blob generate-sas \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.zip" \
+            --permissions r \
+            --expiry "$EXPIRY_DATE" \
+            --output tsv)
+          
+          # Construct the full download URL with SAS token (using ZIP)
+          DOWNLOAD_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/nanokvm-kvmapp-update.zip?${SAS_TOKEN}"
+          echo "Download URL with SAS token generated"
+          
+          # Update the install script with the actual download URL (with SAS token)
+          if [ -f "output/scripts/install-kvmapp.sh" ]; then
+            # Replace the placeholder URL with the actual URL including SAS token
+            sed -i "s|^DEFAULT_PACKAGE_URL=.*|DEFAULT_PACKAGE_URL=\"${DOWNLOAD_URL}\"|" output/scripts/install-kvmapp.sh
+            echo "Updated install script with download URL"
+          fi
+          
+          # Upload install scripts (after updating with SAS URL)
+          if [ -d "output/scripts" ]; then
+            echo "Uploading install scripts..."
+            for script in output/scripts/*.sh; do
+              if [ -f "$script" ]; then
+                SCRIPT_NAME=$(basename "$script")
+                az storage blob upload \
+                  --container-name "$CONTAINER" \
+                  --name "${UPLOAD_PATH}/${SCRIPT_NAME}" \
+                  --file "$script" \
+                  --overwrite
+                echo "Uploaded: ${SCRIPT_NAME}"
+              fi
+            done
+          fi
+          
+          # Generate SAS token for the install script itself
+          SCRIPT_SAS_TOKEN=$(az storage blob generate-sas \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/install-kvmapp.sh" \
+            --permissions r \
+            --expiry "$EXPIRY_DATE" \
+            --output tsv)
+          
+          SCRIPT_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/install-kvmapp.sh?${SCRIPT_SAS_TOKEN}"
+          
+          echo ""
+          echo "=========================================="
+          echo "Artifacts uploaded successfully!"
+          echo "=========================================="
+          echo ""
+          echo "To upgrade your NanoKVM, run these commands on the device:"
+          echo ""
+          echo "  curl -fL -o /tmp/install-kvmapp.sh '${SCRIPT_URL}'"
+          echo "  chmod +x /tmp/install-kvmapp.sh"
+          echo "  /tmp/install-kvmapp.sh"
+          echo ""
+          echo "Or for async mode (survives SSH disconnect):"
+          echo "  /tmp/install-kvmapp.sh --async"
+          echo ""
+          echo "SAS tokens valid until: $EXPIRY_DATE"
+          echo "=========================================="
 
   build-os-image:
     name: Build flashable OS image (existing base)

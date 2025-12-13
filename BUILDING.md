@@ -398,7 +398,111 @@ xzcat nanokvm-os.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 python3 /kvmapp/system/update-nanokvm.py
 ```
 
-### Testing PR Builds on NanoKVM
+### Using the SSH Installation Script
+
+For manual installation via SSH, use the `install-kvmapp.sh` script. This is the recommended method when you have a tarball and want to install it directly on the device:
+
+**Option A: Download directly from URL (recommended)**
+
+1. **SSH into the device and download + install in one step:**
+   ```bash
+   ssh root@<nanokvm-ip>
+   /kvmapp/system/install-kvmapp.sh --url https://your-storage.com/path/to/nanokvm-kvmapp-update.tar.gz
+   ```
+
+**Option B: Use a local file**
+
+1. **Copy the tarball to your NanoKVM:**
+   ```bash
+   scp nanokvm-kvmapp-update.tar.gz root@<nanokvm-ip>:/tmp/
+   ```
+
+2. **SSH into the device and run the installation:**
+   ```bash
+   ssh root@<nanokvm-ip>
+   /kvmapp/system/install-kvmapp.sh /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
+**Common commands:**
+
+3. **Check currently installed version:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --existing-version
+   ```
+
+4. **Rollback if needed:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --rollback
+   ```
+
+5. **List available backups:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --list-backups
+   ```
+
+**Advanced options:**
+
+6. **Run upgrade in background (async mode) - survives SSH disconnections:**
+   ```bash
+   # From URL
+   /kvmapp/system/install-kvmapp.sh --async --url https://your-storage.com/nanokvm-kvmapp-update.tar.gz
+   
+   # From local file
+   /kvmapp/system/install-kvmapp.sh --async --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
+7. **Check upgrade status:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --get-status
+   ```
+
+8. **Upgrade with custom log file:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --log-file /tmp/my-upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
+**What the script does:**
+- Shows "updating from X to Y" version information during installation
+- Downloads package from URL with progress display (when using --url)
+- Stops running services safely
+- Creates a timestamped backup of the current installation
+- Extracts and installs new files
+- Sets correct permissions on all files
+- Restarts services
+- Verifies the installation
+- Supports async mode for SSH-disconnect-safe upgrades
+- Writes progress to log file for monitoring
+
+### Using Build Artifacts with Pre-configured Scripts
+
+When the CI builds artifacts, it generates pre-configured install scripts that include the download URL. This means you can upgrade without specifying any parameters:
+
+1. **Download the pre-configured install script from the build artifacts:**
+   - Go to the PR's "Checks" tab and find the workflow run
+   - Download the `nanokvm-kvmapp-{sha}` artifact (includes `scripts/install-kvmapp.sh`)
+   - Or download directly from Azure Storage if configured
+
+2. **Copy and run the script on your NanoKVM:**
+   ```bash
+   # Copy the pre-configured script to your NanoKVM
+   scp install-kvmapp.sh root@<nanokvm-ip>:/tmp/
+   
+   # SSH into your NanoKVM and run (no parameters needed!)
+   ssh root@<nanokvm-ip>
+   chmod +x /tmp/install-kvmapp.sh
+   /tmp/install-kvmapp.sh
+   ```
+
+3. **Or use async mode for long-running upgrades:**
+   ```bash
+   /tmp/install-kvmapp.sh --async
+   # Then check status with:
+   /tmp/install-kvmapp.sh --get-status
+   ```
+
+The pre-configured script automatically downloads the matching package from the build artifacts storage.
+
+### Testing PR Builds on NanoKVM (Manual Method)
 
 When you have a pull request, the CI builds artifacts that can be tested directly on your NanoKVM device. Use the `upgrade-from-pr.sh` script for safe upgrades:
 
