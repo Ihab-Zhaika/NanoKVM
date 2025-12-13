@@ -354,13 +354,14 @@ jobs:
           
           cd output
           
-          # Create tar.gz package (legacy)
-          tar -czf nanokvm-kvmapp-update.tar.gz -C kvmapp .
+          # Create packages WITH kvmapp/ prefix directory (matching native Sipeed format)
+          # Native update extracts to cache dir, gets "kvmapp/" subdir, then moves to /kvmapp
           
-          # Create ZIP package (preferred - better compatibility with BusyBox)
-          cd kvmapp
-          zip -r ../nanokvm-kvmapp-update.zip .
-          cd ..
+          # Create tar.gz package (legacy) - with kvmapp/ prefix
+          tar -czf nanokvm-kvmapp-update.tar.gz kvmapp
+          
+          # Create ZIP package (preferred) - with kvmapp/ prefix  
+          zip -r nanokvm-kvmapp-update.zip kvmapp
           
           # Create full artifacts package
           tar -czf nanokvm-artifacts.tar.gz kvmapp tools
@@ -368,11 +369,11 @@ jobs:
           echo "Packages created:"
           ls -la *.tar.gz *.zip
           
-          # Verify the packages contain the version file
-          echo "Verifying tar.gz package contents:"
+          # Verify the packages contain the version file and correct structure
+          echo "Verifying tar.gz package contents (should have kvmapp/ prefix):"
           tar -tzf nanokvm-kvmapp-update.tar.gz | head -20
           echo ""
-          echo "Verifying ZIP package contents:"
+          echo "Verifying ZIP package contents (should have kvmapp/ prefix):"
           unzip -l nanokvm-kvmapp-update.zip | head -20
 
       - name: Generate pre-configured install script
