@@ -40,6 +40,7 @@ LOG_FILE=""
 ASYNC_MODE=0
 PACKAGE_URL=""
 LOCAL_PATH=""
+SOURCE_DIR=""
 
 # Colors (may not work on all terminals)
 RED='\033[0;31m'
@@ -118,7 +119,7 @@ Usage: $0 [OPTIONS] [tarball_path]
 
 Arguments:
   tarball_path         Path to the kvmapp update tarball (e.g., /tmp/nanokvm-kvmapp-update.tar.gz)
-                       Can be omitted if using --url to download
+                       Can be omitted if using --url to download or --dir for unpacked directory
 
 Options:
   --help, -h           Show this help message
@@ -129,15 +130,19 @@ Options:
   --async              Run upgrade in background (async mode) - continues even if SSH disconnects
   --get-status         Check the status of an ongoing or completed upgrade
   --url <url>          Download package from URL (shows download progress)
-  --local <path>       Use local file (same as providing path as argument)
+  --local <path>       Use local tarball file (same as providing path as argument)
+  --dir <path>         Use unpacked directory instead of tarball (copies files directly)
 
 Examples:
   # Download from URL and upgrade
   $0 --url https://example.com/nanokvm-kvmapp-update.tar.gz
 
-  # Standard upgrade from local file
+  # Standard upgrade from local tarball
   $0 /tmp/nanokvm-kvmapp-update.tar.gz
   $0 --local /tmp/nanokvm-kvmapp-update.tar.gz
+
+  # Upgrade from unpacked directory
+  $0 --dir /tmp/kvmapp
 
   # Async upgrade with URL download
   $0 --async --url https://example.com/nanokvm-kvmapp-update.tar.gz
@@ -157,12 +162,12 @@ Examples:
   $0 --existing-version
 
 Steps to update your NanoKVM:
-  1. Build or download the kvmapp tarball
+  1. Build or download the kvmapp tarball (or extract it to a directory)
   2. Copy it to your NanoKVM: scp <tarball> root@<ip>:/tmp/
      Or use --url to download directly on the device
   3. SSH into the device: ssh root@<ip>
   4. Run: /kvmapp/system/install-kvmapp.sh /tmp/<tarball>
-     Or: /kvmapp/system/install-kvmapp.sh --url <download_url>
+     Or: /kvmapp/system/install-kvmapp.sh --dir /tmp/kvmapp
 
 EOF
     exit 1
@@ -402,26 +407,27 @@ install_kvmapp() {
     FILE_SIZE=$(ls -la "$TARBALL" 2>/dev/null | awk '{print $5}')
     log_info "Tarball size: $FILE_SIZE bytes"
     
-    # Verify it's a valid tarball (tar.gz)
-    # First check if file appears to be gzipped
-    if ! gzip -t "$TARBALL" 2>/dev/null; then
-        log_error "Invalid tarball: File is not a valid gzip archive"
+    # Check if file starts with gzip magic bytes (1f 8b)
+    MAGIC_BYTES=$(head -c 2 "$TARBALL" 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    if [ "$MAGIC_BYTES" != "1f8b" ]; then
+        log_error "Invalid tarball: File does not have gzip magic bytes"
+        log_error "Expected: 1f8b, Got: $MAGIC_BYTES"
         log_error "File may be corrupted or not a .tar.gz file"
-        log_error "Try re-downloading the file or check file transfer"
-        # Show first few bytes for debugging
-        log_info "File header (hex): $(head -c 4 "$TARBALL" 2>/dev/null | od -A n -t x1 | tr -d ' ')"
         write_status "FAILED: Invalid tarball (not gzip)" 100
         exit 1
     fi
     
-    # Then verify tar can list contents
-    if ! tar -tzf "$TARBALL" > /dev/null 2>&1; then
-        log_error "Invalid tarball: Cannot read tar archive contents"
-        write_status "FAILED: Invalid tarball" 100
-        exit 1
-    fi
+    log_info "File header (hex): $MAGIC_BYTES (valid gzip)"
     
-    log_info "Tarball validation passed"
+    # Try to list tar contents to verify it's a valid tar.gz
+    # Skip gzip -t as BusyBox version may have issues
+    if ! tar -tzf "$TARBALL" > /dev/null 2>&1; then
+        log_warn "tar -tzf validation failed, trying direct extraction..."
+        # Some BusyBox versions have issues with validation but can still extract
+        # We'll proceed and let extraction fail if there's a real problem
+    else
+        log_info "Tarball validation passed"
+    fi
     
     # Remove old kvmapp
     if [ -d "$KVMAPP_DIR" ]; then
@@ -437,6 +443,42 @@ install_kvmapp() {
     
     log_info "Files extracted successfully"
     write_status "Files extracted" 70
+}
+
+# Install kvmapp from unpacked directory
+install_kvmapp_from_dir() {
+    SRC_DIR="$1"
+    
+    log_info "Installing from directory: $SRC_DIR"
+    write_status "Installing from directory" 50
+    
+    # Verify source directory exists
+    if [ ! -d "$SRC_DIR" ]; then
+        log_error "Source directory not found: $SRC_DIR"
+        write_status "FAILED: Source directory not found" 100
+        exit 1
+    fi
+    
+    # Check if it looks like a kvmapp directory
+    if [ ! -f "$SRC_DIR/NanoKVM-Server" ] && [ ! -d "$SRC_DIR/server" ] && [ ! -d "$SRC_DIR/kvm_system" ]; then
+        log_warn "Directory doesn't appear to contain kvmapp files"
+        log_warn "Expected to find NanoKVM-Server, server/, or kvm_system/"
+    fi
+    
+    # Remove old kvmapp
+    if [ -d "$KVMAPP_DIR" ]; then
+        log_info "Removing old installation..."
+        rm -rf "$KVMAPP_DIR"
+    fi
+    
+    # Copy files from source directory
+    log_info "Copying files..."
+    write_status "Copying files" 60
+    mkdir -p "$KVMAPP_DIR"
+    cp -a "$SRC_DIR/"* "$KVMAPP_DIR/"
+    
+    log_info "Files copied successfully"
+    write_status "Files copied" 70
 }
 
 # Set correct permissions
@@ -568,9 +610,20 @@ list_backups() {
     done
 }
 
+# Get version from directory
+get_dir_version() {
+    DIR="$1"
+    if [ -d "$DIR" ] && [ -f "$DIR/version" ]; then
+        tr -d '\n' < "$DIR/version" 2>/dev/null
+    else
+        echo "unknown"
+    fi
+}
+
 # Run the actual upgrade process
 do_upgrade() {
-    TARBALL="$1"
+    SOURCE="$1"
+    IS_DIR="$2"
     
     # Remove set -e for the upgrade process to handle errors gracefully
     set +e
@@ -585,7 +638,11 @@ do_upgrade() {
     
     # Get versions and display update message
     EXISTING_VERSION=$(get_existing_version)
-    NEW_VERSION=$(get_tarball_version "$TARBALL")
+    if [ "$IS_DIR" = "1" ]; then
+        NEW_VERSION=$(get_dir_version "$SOURCE")
+    else
+        NEW_VERSION=$(get_tarball_version "$SOURCE")
+    fi
     log_info "Updating from version: $EXISTING_VERSION"
     log_info "Updating to version:   $NEW_VERSION"
     log_info ""
@@ -593,7 +650,13 @@ do_upgrade() {
     
     stop_services
     create_backup
-    install_kvmapp "$TARBALL"
+    
+    if [ "$IS_DIR" = "1" ]; then
+        install_kvmapp_from_dir "$SOURCE"
+    else
+        install_kvmapp "$SOURCE"
+    fi
+    
     set_permissions
     start_services
     verify_installation
@@ -671,6 +734,15 @@ main() {
                 LOCAL_PATH="$1"
                 shift
                 ;;
+            --dir)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: --dir requires a directory path argument"
+                    exit 1
+                fi
+                SOURCE_DIR="$1"
+                shift
+                ;;
             -*)
                 echo "Unknown option: $1"
                 usage
@@ -683,8 +755,11 @@ main() {
         esac
     done
     
-    # Determine the tarball source
-    if [ -n "$PACKAGE_URL" ]; then
+    # Determine the source
+    if [ -n "$SOURCE_DIR" ]; then
+        # Using unpacked directory - no tarball needed
+        :
+    elif [ -n "$PACKAGE_URL" ]; then
         # Download from URL specified via --url
         TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
     elif [ -n "$LOCAL_PATH" ]; then
@@ -696,8 +771,8 @@ main() {
         echo "Using pre-configured download URL..."
     fi
     
-    # If no tarball specified and no default URL, show usage
-    if [ -z "$TARBALL" ] && [ -z "$PACKAGE_URL" ]; then
+    # If no source specified, show usage
+    if [ -z "$TARBALL" ] && [ -z "$PACKAGE_URL" ] && [ -z "$SOURCE_DIR" ]; then
         usage
     fi
     
@@ -714,8 +789,14 @@ main() {
         TARBALL=$(download_package "$PACKAGE_URL" "$TARBALL")
     fi
     
-    # Verify tarball exists
-    if [ ! -f "$TARBALL" ]; then
+    # If using directory mode, skip tarball check
+    if [ -n "$SOURCE_DIR" ]; then
+        # Verify source directory exists
+        if [ ! -d "$SOURCE_DIR" ]; then
+            echo "Error: Directory not found: $SOURCE_DIR"
+            exit 1
+        fi
+    elif [ ! -f "$TARBALL" ]; then
         echo "Error: File not found: $TARBALL"
         echo ""
         echo "Make sure you've copied the tarball to the device first:"
@@ -723,6 +804,9 @@ main() {
         echo ""
         echo "Or use --url to download directly:"
         echo "  $0 --url <download_url>"
+        echo ""
+        echo "Or use --dir for an unpacked directory:"
+        echo "  $0 --dir /tmp/kvmapp"
         exit 1
     fi
     
@@ -741,6 +825,9 @@ main() {
         if [ -n "$PACKAGE_URL" ]; then
             ASYNC_CMD="$ASYNC_CMD PACKAGE_URL='$PACKAGE_URL'"
         fi
+        if [ -n "$SOURCE_DIR" ]; then
+            ASYNC_CMD="$ASYNC_CMD SOURCE_DIR='$SOURCE_DIR'"
+        fi
         ASYNC_CMD="$ASYNC_CMD '$0' '$TARBALL'"
         
         # Use nohup and redirect all output to log file
@@ -750,7 +837,11 @@ main() {
         exit 0
     else
         # Run synchronously
-        do_upgrade "$TARBALL"
+        if [ -n "$SOURCE_DIR" ]; then
+            do_upgrade "$SOURCE_DIR" "1"
+        else
+            do_upgrade "$TARBALL" "0"
+        fi
     fi
 }
 
@@ -762,10 +853,13 @@ if [ -n "$LOG_FILE" ] && [ "$ASYNC_MODE" = "1" ]; then
         TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
         init_log
         TARBALL=$(download_package "$PACKAGE_URL" "$TARBALL")
+        do_upgrade "$TARBALL" "0"
+    elif [ -n "$SOURCE_DIR" ]; then
+        do_upgrade "$SOURCE_DIR" "1"
     else
         TARBALL="$1"
+        do_upgrade "$TARBALL" "0"
     fi
-    do_upgrade "$TARBALL"
 else
     # Normal entry point
     main "$@"
