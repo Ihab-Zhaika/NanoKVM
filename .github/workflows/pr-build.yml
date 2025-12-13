@@ -337,17 +337,27 @@ jobs:
           echo "Version file created: $VERSION"
           
           cd output
+          
+          # Create tar.gz package (legacy)
           tar -czf nanokvm-kvmapp-update.tar.gz -C kvmapp .
+          
+          # Create ZIP package (preferred - better compatibility with BusyBox)
+          cd kvmapp
+          zip -r ../nanokvm-kvmapp-update.zip .
+          cd ..
           
           # Create full artifacts package
           tar -czf nanokvm-artifacts.tar.gz kvmapp tools
           
           echo "Packages created:"
-          ls -la *.tar.gz
+          ls -la *.tar.gz *.zip
           
-          # Verify the tarball contains the version file
-          echo "Verifying package contents:"
+          # Verify the packages contain the version file
+          echo "Verifying tar.gz package contents:"
           tar -tzf nanokvm-kvmapp-update.tar.gz | head -20
+          echo ""
+          echo "Verifying ZIP package contents:"
+          unzip -l nanokvm-kvmapp-update.zip | head -20
 
       - name: Generate pre-configured install script
         run: |
@@ -372,7 +382,7 @@ jobs:
           ls -la output/
           echo ""
           echo "Packages:"
-          ls -la output/*.tar.gz || true
+          ls -la output/*.tar.gz output/*.zip || true
           echo ""
           echo "Scripts:"
           ls -la output/scripts/ || true
@@ -383,6 +393,7 @@ jobs:
           name: nanokvm-kvmapp-${{ github.sha }}
           path: |
             output/nanokvm-kvmapp-update.tar.gz
+            output/nanokvm-kvmapp-update.zip
             output/scripts/
           if-no-files-found: error
 
@@ -392,6 +403,7 @@ jobs:
           name: nanokvm-build-${{ github.sha }}
           path: |
             output/nanokvm-artifacts.tar.gz
+            output/nanokvm-kvmapp-update.zip
             output/kvmapp/
             output/tools/
             output/scripts/
@@ -426,11 +438,18 @@ jobs:
           echo "Container: $CONTAINER"
           echo "Path: $UPLOAD_PATH"
           
-          # Upload kvmapp package
+          # Upload kvmapp tar.gz package (legacy)
           az storage blob upload \
             --container-name "$CONTAINER" \
             --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
             --file output/nanokvm-kvmapp-update.tar.gz \
+            --overwrite
+          
+          # Upload kvmapp ZIP package (preferred)
+          az storage blob upload \
+            --container-name "$CONTAINER" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.zip" \
+            --file output/nanokvm-kvmapp-update.zip \
             --overwrite
           
           # Upload full artifacts package
@@ -440,17 +459,17 @@ jobs:
             --file output/nanokvm-artifacts.tar.gz \
             --overwrite
           
-          # Generate SAS token for the kvmapp package (valid for 30 days)
+          # Generate SAS token for the ZIP package (valid for 30 days)
           EXPIRY_DATE=$(date -u -d "+30 days" '+%Y-%m-%dT%H:%MZ')
           SAS_TOKEN=$(az storage blob generate-sas \
             --container-name "$CONTAINER" \
-            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz" \
+            --name "${UPLOAD_PATH}/nanokvm-kvmapp-update.zip" \
             --permissions r \
             --expiry "$EXPIRY_DATE" \
             --output tsv)
           
-          # Construct the full download URL with SAS token
-          DOWNLOAD_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/nanokvm-kvmapp-update.tar.gz?${SAS_TOKEN}"
+          # Construct the full download URL with SAS token (using ZIP)
+          DOWNLOAD_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${UPLOAD_PATH}/nanokvm-kvmapp-update.zip?${SAS_TOKEN}"
           echo "Download URL with SAS token generated"
           
           # Update the install script with the actual download URL (with SAS token)

@@ -182,12 +182,22 @@ get_existing_version() {
     fi
 }
 
-# Get version from tarball
+# Get version from package (ZIP or tar.gz)
 get_tarball_version() {
-    TARBALL="$1"
-    if [ -f "$TARBALL" ]; then
-        # Extract version file from tarball and read it
-        VERSION=$(tar -xzf "$TARBALL" -O version 2>/dev/null | tr -d '\n')
+    PACKAGE="$1"
+    if [ -f "$PACKAGE" ]; then
+        # Check file type by magic bytes
+        MAGIC_BYTES=$(head -c 4 "$PACKAGE" 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+        FIRST_TWO=$(echo "$MAGIC_BYTES" | cut -c1-4)
+        
+        if [ "$FIRST_TWO" = "504b" ]; then
+            # ZIP file - extract version using unzip
+            VERSION=$(unzip -p "$PACKAGE" version 2>/dev/null | tr -d '\n')
+        else
+            # tar.gz file
+            VERSION=$(tar -xzf "$PACKAGE" -O version 2>/dev/null | tr -d '\n')
+        fi
+        
         if [ -n "$VERSION" ]; then
             echo "$VERSION"
         else
@@ -389,44 +399,47 @@ create_backup() {
     write_status "Backup complete" 40
 }
 
-# Install kvmapp from tarball
+# Install kvmapp from package (ZIP or tar.gz)
 install_kvmapp() {
-    TARBALL="$1"
+    PACKAGE="$1"
     
-    log_info "Installing from: $TARBALL"
+    log_info "Installing from: $PACKAGE"
     write_status "Installing files" 50
     
-    # Verify tarball
-    if [ ! -f "$TARBALL" ]; then
-        log_error "Tarball not found: $TARBALL"
-        write_status "FAILED: Tarball not found" 100
+    # Verify package exists
+    if [ ! -f "$PACKAGE" ]; then
+        log_error "Package not found: $PACKAGE"
+        write_status "FAILED: Package not found" 100
         exit 1
     fi
     
     # Get file info for debugging
-    FILE_SIZE=$(ls -la "$TARBALL" 2>/dev/null | awk '{print $5}')
-    log_info "Tarball size: $FILE_SIZE bytes"
+    FILE_SIZE=$(ls -la "$PACKAGE" 2>/dev/null | awk '{print $5}')
+    log_info "Package size: $FILE_SIZE bytes"
     
-    # Check if file starts with gzip magic bytes (1f 8b)
-    MAGIC_BYTES=$(head -c 2 "$TARBALL" 2>/dev/null | od -A n -t x1 | tr -d ' \n')
-    if [ "$MAGIC_BYTES" != "1f8b" ]; then
-        log_error "Invalid tarball: File does not have gzip magic bytes"
-        log_error "Expected: 1f8b, Got: $MAGIC_BYTES"
-        log_error "File may be corrupted or not a .tar.gz file"
-        write_status "FAILED: Invalid tarball (not gzip)" 100
-        exit 1
-    fi
+    # Check file type by magic bytes
+    MAGIC_BYTES=$(head -c 4 "$PACKAGE" 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    log_info "File header (hex): $MAGIC_BYTES"
     
-    log_info "File header (hex): $MAGIC_BYTES (valid gzip)"
+    # Detect file type: ZIP (504b0304) or gzip (1f8b)
+    IS_ZIP=0
+    IS_GZIP=0
     
-    # Try to list tar contents to verify it's a valid tar.gz
-    # Skip gzip -t as BusyBox version may have issues
-    if ! tar -tzf "$TARBALL" > /dev/null 2>&1; then
-        log_warn "tar -tzf validation failed, trying direct extraction..."
-        # Some BusyBox versions have issues with validation but can still extract
-        # We'll proceed and let extraction fail if there's a real problem
+    # Check for ZIP magic bytes (PK..) - first 4 bytes are 50 4b 03 04
+    FIRST_TWO=$(echo "$MAGIC_BYTES" | cut -c1-4)
+    if [ "$FIRST_TWO" = "504b" ]; then
+        IS_ZIP=1
+        log_info "Detected ZIP archive"
+    # Check for gzip magic bytes (1f8b)
+    elif [ "$FIRST_TWO" = "1f8b" ]; then
+        IS_GZIP=1
+        log_info "Detected gzip archive"
     else
-        log_info "Tarball validation passed"
+        log_error "Unknown file format"
+        log_error "Expected ZIP (504b) or gzip (1f8b), Got: $FIRST_TWO"
+        log_error "File may be corrupted or wrong format"
+        write_status "FAILED: Unknown file format" 100
+        exit 1
     fi
     
     # Remove old kvmapp
@@ -439,7 +452,20 @@ install_kvmapp() {
     log_info "Extracting files..."
     write_status "Extracting files" 60
     mkdir -p "$KVMAPP_DIR"
-    tar -xzf "$TARBALL" -C "$KVMAPP_DIR"
+    
+    if [ "$IS_ZIP" = "1" ]; then
+        # Extract ZIP file
+        if command -v unzip > /dev/null 2>&1; then
+            unzip -o "$PACKAGE" -d "$KVMAPP_DIR"
+        else
+            log_error "unzip command not found, cannot extract ZIP file"
+            write_status "FAILED: unzip not available" 100
+            exit 1
+        fi
+    else
+        # Extract tar.gz file
+        tar -xzf "$PACKAGE" -C "$KVMAPP_DIR"
+    fi
     
     log_info "Files extracted successfully"
     write_status "Files extracted" 70
