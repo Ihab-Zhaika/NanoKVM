@@ -20,14 +20,19 @@
 #   - Set correct permissions
 #   - Restart services
 
-set -e
-
 # Configuration
 KVMAPP_DIR="/kvmapp"
 BACKUP_DIR="/root/kvmapp-backup"
 SERVICE_SCRIPT="/etc/init.d/S95nanokvm"
 VERSION_FILE="/kvmapp/version"
+DEFAULT_LOG_FILE="/tmp/kvmapp-upgrade.log"
+STATUS_FILE="/tmp/kvmapp-upgrade-status"
+OLED_MESSAGE_FILE="/tmp/kvmapp-oled-message"
 MAX_BACKUPS=3
+
+# Runtime options (can be overridden by command line)
+LOG_FILE=""
+ASYNC_MODE=0
 
 # Colors (may not work on all terminals)
 RED='\033[0;31m'
@@ -35,17 +40,66 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Logging functions
+# Initialize log file
+init_log() {
+    if [ -n "$LOG_FILE" ]; then
+        # Create or truncate log file
+        : > "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Upgrade log initialized" >> "$LOG_FILE"
+    fi
+}
+
+# Logging functions - write to both stdout and log file if specified
 log_info() {
-    printf "${GREEN}[INFO]${NC} %s\n" "$1"
+    MSG="[INFO] $1"
+    if [ -n "$LOG_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') $MSG" >> "$LOG_FILE"
+    fi
+    if [ "$ASYNC_MODE" -eq 0 ]; then
+        printf "${GREEN}%s${NC}\n" "$MSG"
+    fi
 }
 
 log_warn() {
-    printf "${YELLOW}[WARN]${NC} %s\n" "$1"
+    MSG="[WARN] $1"
+    if [ -n "$LOG_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') $MSG" >> "$LOG_FILE"
+    fi
+    if [ "$ASYNC_MODE" -eq 0 ]; then
+        printf "${YELLOW}%s${NC}\n" "$MSG"
+    fi
 }
 
 log_error() {
-    printf "${RED}[ERROR]${NC} %s\n" "$1"
+    MSG="[ERROR] $1"
+    if [ -n "$LOG_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') $MSG" >> "$LOG_FILE"
+    fi
+    if [ "$ASYNC_MODE" -eq 0 ]; then
+        printf "${RED}%s${NC}\n" "$MSG"
+    fi
+}
+
+# Write status to status file (for --get-status)
+write_status() {
+    STATUS="$1"
+    PROGRESS="$2"
+    echo "$STATUS" > "$STATUS_FILE"
+    if [ -n "$LOG_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [STATUS] $STATUS (${PROGRESS}%)" >> "$LOG_FILE"
+    fi
+}
+
+# Write message to OLED display file
+# The kvm_system will read this and display on screen
+write_oled_message() {
+    MSG="$1"
+    echo "$MSG" > "$OLED_MESSAGE_FILE"
+}
+
+# Clear OLED message file
+clear_oled_message() {
+    rm -f "$OLED_MESSAGE_FILE" 2>/dev/null
 }
 
 # Display usage
@@ -53,19 +107,34 @@ usage() {
     cat << EOF
 NanoKVM Installation Script
 
-Usage: $0 <tarball_path>
+Usage: $0 [OPTIONS] <tarball_path>
 
 Arguments:
-  tarball_path    Path to the kvmapp update tarball (e.g., /tmp/nanokvm-kvmapp-update.tar.gz)
+  tarball_path         Path to the kvmapp update tarball (e.g., /tmp/nanokvm-kvmapp-update.tar.gz)
 
 Options:
   --help, -h           Show this help message
   --rollback           Restore from the most recent backup
   --list-backups       List available backups
   --existing-version   Show the currently installed version
+  --log-file <path>    Write upgrade log to specified file (default: $DEFAULT_LOG_FILE)
+  --async              Run upgrade in background (async mode) - continues even if SSH disconnects
+  --get-status         Check the status of an ongoing or completed upgrade
 
 Examples:
+  # Standard upgrade (wait for completion)
   $0 /tmp/nanokvm-kvmapp-update.tar.gz
+
+  # Upgrade with logging
+  $0 --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+
+  # Async upgrade (runs in background, SSH-disconnect safe)
+  $0 --async --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+
+  # Check upgrade status
+  $0 --get-status
+
+  # Other commands
   $0 --rollback
   $0 --list-backups
   $0 --existing-version
@@ -108,7 +177,31 @@ get_tarball_version() {
 # Show existing version
 show_existing_version() {
     VERSION=$(get_existing_version)
-    log_info "Currently installed version: $VERSION"
+    echo "Currently installed version: $VERSION"
+}
+
+# Show upgrade status
+show_status() {
+    echo "=== Upgrade Status ==="
+    
+    # Check status file
+    if [ -f "$STATUS_FILE" ]; then
+        STATUS=$(cat "$STATUS_FILE")
+        echo "Status: $STATUS"
+    else
+        echo "Status: No upgrade in progress or status not available"
+    fi
+    
+    # Show log file if it exists
+    if [ -f "$DEFAULT_LOG_FILE" ]; then
+        echo ""
+        echo "=== Recent Log Entries ==="
+        tail -20 "$DEFAULT_LOG_FILE"
+    elif [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
+        echo ""
+        echo "=== Recent Log Entries ==="
+        tail -20 "$LOG_FILE"
+    fi
 }
 
 # Check if running as root
@@ -122,6 +215,7 @@ check_root() {
 # Stop NanoKVM services
 stop_services() {
     log_info "Stopping NanoKVM services..."
+    write_status "Stopping services" 10
     
     if [ -x "$SERVICE_SCRIPT" ]; then
         "$SERVICE_SCRIPT" stop 2>/dev/null || true
@@ -149,26 +243,31 @@ stop_services() {
     rm -rf /tmp/kvm_system /tmp/server 2>/dev/null || true
     
     log_info "Services stopped"
+    write_status "Services stopped" 20
 }
 
 # Start NanoKVM services
 start_services() {
     log_info "Starting NanoKVM services..."
+    write_status "Starting services" 80
     
     if [ -x "$SERVICE_SCRIPT" ]; then
         "$SERVICE_SCRIPT" start
     else
         log_error "Service script not found: $SERVICE_SCRIPT"
+        write_status "FAILED: Service script not found" 100
         exit 1
     fi
     
     sleep 3
     log_info "Services started"
+    write_status "Services started" 90
 }
 
 # Create backup of current installation
 create_backup() {
     log_info "Creating backup..."
+    write_status "Creating backup" 30
     
     if [ ! -d "$KVMAPP_DIR" ]; then
         log_info "No existing installation found, skipping backup"
@@ -198,6 +297,7 @@ create_backup() {
             rm -rf "$old_backup"
         done
     fi
+    write_status "Backup complete" 40
 }
 
 # Install kvmapp from tarball
@@ -205,16 +305,19 @@ install_kvmapp() {
     TARBALL="$1"
     
     log_info "Installing from: $TARBALL"
+    write_status "Installing files" 50
     
     # Verify tarball
     if [ ! -f "$TARBALL" ]; then
         log_error "Tarball not found: $TARBALL"
+        write_status "FAILED: Tarball not found" 100
         exit 1
     fi
     
     # Verify it's a valid tarball (tar.gz)
     if ! tar -tzf "$TARBALL" > /dev/null 2>&1; then
         log_error "Invalid tarball (not a valid tar.gz file)"
+        write_status "FAILED: Invalid tarball" 100
         exit 1
     fi
     
@@ -226,15 +329,18 @@ install_kvmapp() {
     
     # Create kvmapp directory and extract
     log_info "Extracting files..."
+    write_status "Extracting files" 60
     mkdir -p "$KVMAPP_DIR"
     tar -xzf "$TARBALL" -C "$KVMAPP_DIR"
     
     log_info "Files extracted successfully"
+    write_status "Files extracted" 70
 }
 
 # Set correct permissions
 set_permissions() {
     log_info "Setting permissions..."
+    write_status "Setting permissions" 75
     
     # Set directory permissions
     find "$KVMAPP_DIR" -type d -exec chmod 755 {} \;
@@ -262,12 +368,14 @@ set_permissions() {
 # Verify the installation
 verify_installation() {
     log_info "Verifying installation..."
+    write_status "Verifying installation" 95
     
     WARNINGS=0
     
     # Check critical components
     if [ ! -d "$KVMAPP_DIR" ]; then
         log_error "kvmapp directory not found!"
+        write_status "FAILED: kvmapp directory not found" 100
         return 1
     fi
     
@@ -313,6 +421,7 @@ verify_installation() {
 # Rollback to previous backup
 rollback() {
     log_info "Rolling back to previous backup..."
+    write_status "Rolling back" 10
     
     # Find most recent backup
     # shellcheck disable=SC2012
@@ -320,6 +429,7 @@ rollback() {
     
     if [ -z "$LATEST_BACKUP" ] || [ ! -d "$LATEST_BACKUP" ]; then
         log_error "No backup found to restore"
+        write_status "FAILED: No backup found" 100
         exit 1
     fi
     
@@ -336,16 +446,17 @@ rollback() {
     start_services
     
     log_info "Rollback completed"
+    write_status "Rollback completed" 100
 }
 
 # List available backups
 list_backups() {
-    log_info "Available backups:"
+    echo "Available backups:"
     # shellcheck disable=SC2012
     BACKUP_LIST=$(ls -1td "${BACKUP_DIR}_"* 2>/dev/null)
     
     if [ -z "$BACKUP_LIST" ]; then
-        log_info "  No backups found"
+        echo "  No backups found"
         return 0
     fi
     
@@ -355,49 +466,20 @@ list_backups() {
     done
 }
 
-# Main function
-main() {
-    # Handle help
-    if [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ -z "$1" ]; then
-        usage
-    fi
-    
-    # Handle rollback
-    if [ "$1" = "--rollback" ]; then
-        check_root
-        rollback
-        exit 0
-    fi
-    
-    # Handle list backups
-    if [ "$1" = "--list-backups" ]; then
-        list_backups
-        exit 0
-    fi
-    
-    # Handle existing version check
-    if [ "$1" = "--existing-version" ]; then
-        show_existing_version
-        exit 0
-    fi
-    
+# Run the actual upgrade process
+do_upgrade() {
     TARBALL="$1"
     
-    check_root
+    # Remove set -e for the upgrade process to handle errors gracefully
+    set +e
+    
+    init_log
+    write_status "Starting upgrade" 0
     
     log_info "========================================"
     log_info "NanoKVM Installation Script"
     log_info "========================================"
     log_info ""
-    
-    # Verify tarball exists
-    if [ ! -f "$TARBALL" ]; then
-        log_error "File not found: $TARBALL"
-        log_info ""
-        log_info "Make sure you've copied the tarball to the device first:"
-        log_info "  scp nanokvm-kvmapp-update.tar.gz root@<ip>:/tmp/"
-        exit 1
-    fi
     
     # Get versions and display update message
     EXISTING_VERSION=$(get_existing_version)
@@ -405,6 +487,7 @@ main() {
     log_info "Updating from version: $EXISTING_VERSION"
     log_info "Updating to version:   $NEW_VERSION"
     log_info ""
+    write_status "Upgrading from $EXISTING_VERSION to $NEW_VERSION" 5
     
     stop_services
     create_backup
@@ -422,6 +505,110 @@ main() {
     log_info "If you have issues, rollback with:"
     log_info "  $0 --rollback"
     log_info ""
+    
+    write_status "SUCCESS: Updated from $EXISTING_VERSION to $NEW_VERSION" 100
+    clear_oled_message
 }
 
-main "$@"
+# Main function
+main() {
+    # Parse command line arguments
+    TARBALL=""
+    
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --help|-h)
+                usage
+                ;;
+            --rollback)
+                check_root
+                LOG_FILE="$DEFAULT_LOG_FILE"
+                rollback
+                exit 0
+                ;;
+            --list-backups)
+                list_backups
+                exit 0
+                ;;
+            --existing-version)
+                show_existing_version
+                exit 0
+                ;;
+            --get-status)
+                show_status
+                exit 0
+                ;;
+            --log-file)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: --log-file requires a path argument"
+                    exit 1
+                fi
+                LOG_FILE="$1"
+                shift
+                ;;
+            --async)
+                ASYNC_MODE=1
+                shift
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                usage
+                ;;
+            *)
+                TARBALL="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # If no tarball specified, show usage
+    if [ -z "$TARBALL" ]; then
+        usage
+    fi
+    
+    # Set default log file if async mode and no log file specified
+    if [ "$ASYNC_MODE" -eq 1 ] && [ -z "$LOG_FILE" ]; then
+        LOG_FILE="$DEFAULT_LOG_FILE"
+    fi
+    
+    check_root
+    
+    # Verify tarball exists
+    if [ ! -f "$TARBALL" ]; then
+        echo "Error: File not found: $TARBALL"
+        echo ""
+        echo "Make sure you've copied the tarball to the device first:"
+        echo "  scp nanokvm-kvmapp-update.tar.gz root@<ip>:/tmp/"
+        exit 1
+    fi
+    
+    if [ "$ASYNC_MODE" -eq 1 ]; then
+        # Run in background with nohup to survive SSH disconnect
+        echo "Starting upgrade in background (async mode)..."
+        echo "Log file: $LOG_FILE"
+        echo ""
+        echo "Monitor progress with:"
+        echo "  $0 --get-status"
+        echo "  tail -f $LOG_FILE"
+        echo ""
+        
+        # Use nohup and redirect all output to log file
+        nohup sh -c "LOG_FILE='$LOG_FILE' ASYNC_MODE=1 '$0' '$TARBALL'" > /dev/null 2>&1 &
+        
+        echo "Upgrade started in background (PID: $!)"
+        exit 0
+    else
+        # Run synchronously
+        do_upgrade "$TARBALL"
+    fi
+}
+
+# Check if we're being called as a child process for async mode
+if [ -n "$LOG_FILE" ] && [ "$ASYNC_MODE" = "1" ]; then
+    # We're the async child process, do the upgrade
+    do_upgrade "$1"
+else
+    # Normal entry point
+    main "$@"
+fi

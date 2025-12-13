@@ -428,6 +428,23 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
    /kvmapp/system/install-kvmapp.sh --list-backups
    ```
 
+**Advanced options:**
+
+6. **Run upgrade in background (async mode) - survives SSH disconnections:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --async --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
+7. **Check upgrade status:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --get-status
+   ```
+
+8. **Upgrade with custom log file:**
+   ```bash
+   /kvmapp/system/install-kvmapp.sh --log-file /tmp/my-upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
+   ```
+
 **What the script does:**
 - Shows "updating from X to Y" version information during installation
 - Stops running services safely
@@ -436,6 +453,8 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
 - Sets correct permissions on all files
 - Restarts services
 - Verifies the installation
+- Supports async mode for SSH-disconnect-safe upgrades
+- Writes progress to log file for monitoring
 
 ### Testing PR Builds on NanoKVM
 
