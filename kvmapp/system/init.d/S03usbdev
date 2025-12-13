@@ -131,7 +131,7 @@ start_usb_dev(){
     then
         echo "Configuring USB Audio Input (UAC2)..."
         mkdir -p functions/uac2.usb0
-        # Audio source configuration (capture from device perspective)
+        # Audio input configuration (microphone from host perspective, capture from device)
         echo 48000 > functions/uac2.usb0/c_srate       # Sample rate
         echo 3 > functions/uac2.usb0/c_chmask           # Stereo (left+right channels)
         echo 2 > functions/uac2.usb0/c_ssize            # 16-bit samples
@@ -148,7 +148,7 @@ start_usb_dev(){
     then
         echo "Configuring USB Audio Output (UAC2)..."
         mkdir -p functions/uac2.usb1
-        # Audio sink configuration (playback from device perspective)
+        # Audio output configuration (speaker from host perspective, playback to device)
         echo 48000 > functions/uac2.usb1/p_srate        # Sample rate
         echo 3 > functions/uac2.usb1/p_chmask            # Stereo
         echo 2 > functions/uac2.usb1/p_ssize             # 16-bit samples
@@ -162,6 +162,7 @@ start_usb_dev(){
 
     echo "USB Gadget Configuration Summary:"
     echo "Configured functions:"
+    # Filter for symbolic links (lines starting with 'l')
     ls -la /sys/kernel/config/usb_gadget/g0/configs/c.1/ 2>/dev/null | grep "^l" || echo "No functions configured"
 
     if [ ! -e /boot/udc.disable ]; then
