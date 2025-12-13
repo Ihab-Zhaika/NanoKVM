@@ -351,6 +351,13 @@ jobs:
           BR2_PACKAGE_NANO=y
           BR2_PACKAGE_HTOP=y
           BR2_PACKAGE_CURL=y
+          
+          # USB Audio (UAC2) support for virtual audio
+          BR2_PACKAGE_ALSA_LIB=y
+          BR2_PACKAGE_ALSA_LIB_MIXER=y
+          BR2_PACKAGE_ALSA_LIB_PCM=y
+          BR2_PACKAGE_ALSA_UTILS=y
+          BR2_PACKAGE_ALSA_UTILS_AMIXER=y
           EOF
           
           # Add custom packages if specified
@@ -364,6 +371,9 @@ jobs:
           
           echo "Buildroot config fragment:"
           cat buildroot-config-fragment
+          
+          echo "Kernel config fragment for UAC2:"
+          cat board/sipeed/nanokvm/linux-uac2.config
 
       - name: Build OS image with Buildroot
         env:
@@ -381,6 +391,17 @@ jobs:
           # Apply custom configuration
           if [ -f /workspace/buildroot-config-fragment ]; then
             cat /workspace/buildroot-config-fragment >> buildroot/configs/licheervnano_defconfig || true
+          fi
+          
+          # Apply kernel config fragment for UAC2 support
+          if [ -f /workspace/board/sipeed/nanokvm/linux-uac2.config ]; then
+            echo "Applying kernel UAC2 configuration fragment..."
+            mkdir -p buildroot/board/sipeed/nanokvm
+            cp /workspace/board/sipeed/nanokvm/linux-uac2.config buildroot/board/sipeed/nanokvm/
+            
+            # Add kernel fragment to buildroot config using the correct path
+            # The fragment is now in buildroot/board, not BR2_EXTERNAL
+            echo 'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="board/sipeed/nanokvm/linux-uac2.config"' >> buildroot/configs/licheervnano_defconfig || true
           fi
           
           # Build the image

@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y \
     dosfstools \
     ca-certificates \
     gnupg \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
@@ -56,17 +57,35 @@ ENV PATH="${GOPATH}/bin:${PATH}"
 
 # Download and install RISC-V musl toolchain
 # Using multiple mirrors for reliability
+# Set TOOLCHAIN_URL as build arg to use alternative mirror (recommended)
 ARG TOOLCHAIN_URL=""
 RUN mkdir -p /opt/toolchain && cd /opt/toolchain && \
+    DOWNLOAD_SUCCESS=0 && \
     if [ -n "$TOOLCHAIN_URL" ]; then \
-        curl -fsSL --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o toolchain.tgz; \
-    else \
-        curl -fsSL --connect-timeout 30 --max-time 300 \
+        echo "Using custom toolchain URL from build arg..." && \
+        if curl -fsSL --retry 3 --connect-timeout 30 --max-time 300 "$TOOLCHAIN_URL" -o toolchain.tgz; then \
+            DOWNLOAD_SUCCESS=1; \
+        else \
+            echo "WARNING: Custom toolchain URL failed, falling back to public mirrors..."; \
+        fi; \
+    fi && \
+    if [ "$DOWNLOAD_SUCCESS" = "0" ]; then \
+        echo "Trying primary mirror: musl.cc..." && \
+        curl -fsSL --retry 2 --connect-timeout 30 --max-time 300 \
             "https://musl.cc/riscv64-linux-musl-cross.tgz" \
-            -o toolchain.tgz || \
-        curl -fsSL --connect-timeout 30 --max-time 300 \
+            -o toolchain.tgz && DOWNLOAD_SUCCESS=1 || \
+        (echo "Primary mirror failed, trying secondary mirror: more.musl.cc..." && \
+        curl -fsSL --retry 2 --connect-timeout 30 --max-time 300 \
             "https://more.musl.cc/11.2.1/x86_64-linux-musl/riscv64-linux-musl-cross.tgz" \
-            -o toolchain.tgz; \
+            -o toolchain.tgz && DOWNLOAD_SUCCESS=1) || \
+        (echo "Secondary mirror failed, trying GitHub mirror..." && \
+        curl -fsSL --retry 2 --connect-timeout 30 --max-time 300 \
+            "https://github.com/richfelker/musl-cross-make/releases/download/v0.9.9/riscv64-linux-musl-cross.tgz" \
+            -o toolchain.tgz && DOWNLOAD_SUCCESS=1); \
+    fi && \
+    if [ "$DOWNLOAD_SUCCESS" = "0" ]; then \
+        echo "ERROR: All toolchain mirrors failed. Please set TOOLCHAIN_URL build arg."; \
+        exit 1; \
     fi && \
     tar xzf toolchain.tgz && \
     rm toolchain.tgz

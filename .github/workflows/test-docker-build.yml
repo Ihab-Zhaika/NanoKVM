@@ -1,0 +1,190 @@
+name: Test Docker Build and Boot Image
+
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'docker-build.sh'
+      - 'kvmapp/**'
+      - 'board/**'
+      - '.github/workflows/test-docker-build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-docker-build:
+    name: Test Docker image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        env:
+          TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
+        run: |
+          echo "Building NanoKVM Docker image..."
+          if [ -n "$TOOLCHAIN_URL" ]; then
+            echo "Using custom toolchain URL from secret"
+            docker build --build-arg TOOLCHAIN_URL="$TOOLCHAIN_URL" -t nanokvm-builder:test .
+          else
+            echo "No custom toolchain URL, using default mirrors"
+            docker build -t nanokvm-builder:test .
+          fi
+          
+      - name: Verify Docker image
+        run: |
+          echo "Verifying Docker image..."
+          docker run --rm nanokvm-builder:test bash -c "
+            echo '=== Verifying Build Environment ==='
+            go version
+            node --version
+            pnpm --version
+            riscv64-linux-gnu-gcc --version | head -1
+            riscv64-linux-musl-gcc --version | head -1
+            patchelf --version
+            echo '=== Verification Complete ==='
+          "
+
+      - name: Test build components in Docker
+        run: |
+          echo "Testing build process..."
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -v "$(pwd)/test-output:/workspace/output" \
+            nanokvm-builder:test \
+            bash -c "
+              set -e
+              echo '=== Testing Frontend Build ==='
+              cd /workspace/web
+              pnpm install --frozen-lockfile
+              pnpm build
+              ls -la dist/
+              
+              echo '=== Testing Server Build ==='
+              cd /workspace/server
+              export CGO_ENABLED=1
+              export GOOS=linux
+              export GOARCH=riscv64
+              export CC=riscv64-linux-musl-gcc
+              export CGO_CFLAGS='-march=rv64gc -mabi=lp64d'
+              go build -buildvcs=false -o NanoKVM-Server -v
+              file NanoKVM-Server
+              patchelf --add-rpath '\$ORIGIN/dl_lib' NanoKVM-Server
+              
+              echo '=== Testing kvmapp Assembly ==='
+              cd /workspace
+              mkdir -p /workspace/output/kvmapp/server/web
+              cp -r kvmapp/. /workspace/output/kvmapp/
+              cp -r web/dist/. /workspace/output/kvmapp/server/web/
+              cp server/NanoKVM-Server /workspace/output/kvmapp/server/
+              chmod +x /workspace/output/kvmapp/system/init.d/* 2>/dev/null || true
+              
+              echo '=== Verifying Init Scripts ==='
+              ls -la /workspace/output/kvmapp/system/init.d/
+              
+              echo '=== Verifying S02modules ==='
+              cat /workspace/output/kvmapp/system/init.d/S02modules
+              test -x /workspace/output/kvmapp/system/init.d/S02modules || exit 1
+              
+              echo '=== Verifying S03usbdev UAC2 Support ==='
+              grep -q 'uac2.usb0' /workspace/output/kvmapp/system/init.d/S03usbdev || exit 1
+              grep -q 'uac2.usb1' /workspace/output/kvmapp/system/init.d/S03usbdev || exit 1
+              
+              echo '=== Creating tarball ==='
+              cd /workspace/output
+              tar -czf nanokvm-test.tar.gz -C kvmapp .
+              ls -lh nanokvm-test.tar.gz
+              
+              echo '=== Build Test Complete ==='
+            "
+
+      - name: Verify kernel config fragment exists
+        run: |
+          echo "Checking kernel config fragment..."
+          if [ -f "board/sipeed/nanokvm/linux-uac2.config" ]; then
+            echo "Kernel config fragment found:"
+            cat board/sipeed/nanokvm/linux-uac2.config
+            
+            # Verify UAC2 config is present
+            grep -q "CONFIG_USB_CONFIGFS_F_UAC2=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_USB_F_UAC2=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_SND_USB_AUDIO=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_SOUND=y" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_SND=y" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            
+            echo "✓ Kernel config fragment is valid"
+          else
+            echo "ERROR: Kernel config fragment not found"
+            exit 1
+          fi
+
+      - name: Test boot image structure
+        run: |
+          echo "Testing boot image structure simulation..."
+          
+          # Create a simulated boot partition structure
+          mkdir -p test-boot-sim/boot
+          mkdir -p test-boot-sim/kvmapp/system/init.d
+          
+          # Copy init scripts
+          cp kvmapp/system/init.d/S02modules test-boot-sim/kvmapp/system/init.d/
+          cp kvmapp/system/init.d/S03usbdev test-boot-sim/kvmapp/system/init.d/
+          
+          # Create test marker files
+          touch test-boot-sim/boot/usb.audio_in
+          touch test-boot-sim/boot/usb.audio_out
+          
+          # Simulate the init script execution (dry run)
+          echo "=== Simulating S02modules execution ==="
+          bash -n test-boot-sim/kvmapp/system/init.d/S02modules || exit 1
+          echo "✓ S02modules syntax is valid"
+          
+          echo "=== Simulating S03usbdev execution ==="
+          bash -n test-boot-sim/kvmapp/system/init.d/S03usbdev || exit 1
+          echo "✓ S03usbdev syntax is valid"
+          
+          echo "=== Checking UAC2 configuration in S03usbdev ==="
+          if grep -q "functions/uac2.usb0" test-boot-sim/kvmapp/system/init.d/S03usbdev && \
+             grep -q "functions/uac2.usb1" test-boot-sim/kvmapp/system/init.d/S03usbdev; then
+            echo "✓ UAC2 configuration found in init script"
+          else
+            echo "ERROR: UAC2 configuration not found"
+            exit 1
+          fi
+          
+          echo "=== Boot Image Structure Test Complete ==="
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-build-artifacts-${{ github.sha }}
+          path: |
+            test-output/nanokvm-test.tar.gz
+            test-boot-sim/**
+          if-no-files-found: warn
+
+      - name: Test result summary
+        if: success()
+        run: |
+          echo "### ✅ Docker Build and Boot Image Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Docker image built successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Frontend build successful" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Server build successful (RISC-V)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ kvmapp assembly successful" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Init scripts validated" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ UAC2 configuration verified" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Kernel config fragment present" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Boot image structure validated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All UAC2 kernel module support changes validated!" >> $GITHUB_STEP_SUMMARY
