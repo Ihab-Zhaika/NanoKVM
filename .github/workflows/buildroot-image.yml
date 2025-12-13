@@ -103,7 +103,6 @@ jobs:
               file \
               dosfstools \
               mtools \
-              genimage \
               u-boot-tools \
               device-tree-compiler \
               libconfuse-dev \
