@@ -28,9 +28,17 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
+        env:
+          TOOLCHAIN_URL: ${{ secrets.TOOLCHAIN_URL }}
         run: |
           echo "Building NanoKVM Docker image..."
-          docker build -t nanokvm-builder:test .
+          if [ -n "$TOOLCHAIN_URL" ]; then
+            echo "Using custom toolchain URL from secret"
+            docker build --build-arg TOOLCHAIN_URL="$TOOLCHAIN_URL" -t nanokvm-builder:test .
+          else
+            echo "No custom toolchain URL, using default mirrors"
+            docker build -t nanokvm-builder:test .
+          fi
           
       - name: Verify Docker image
         run: |
