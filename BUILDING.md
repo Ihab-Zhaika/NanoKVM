@@ -402,6 +402,16 @@ python3 /kvmapp/system/update-nanokvm.py
 
 For manual installation via SSH, use the `install-kvmapp.sh` script. This is the recommended method when you have a tarball and want to install it directly on the device:
 
+**Option A: Download directly from URL (recommended)**
+
+1. **SSH into the device and download + install in one step:**
+   ```bash
+   ssh root@<nanokvm-ip>
+   /kvmapp/system/install-kvmapp.sh --url https://your-storage.com/path/to/nanokvm-kvmapp-update.tar.gz
+   ```
+
+**Option B: Use a local file**
+
 1. **Copy the tarball to your NanoKVM:**
    ```bash
    scp nanokvm-kvmapp-update.tar.gz root@<nanokvm-ip>:/tmp/
@@ -412,6 +422,8 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
    ssh root@<nanokvm-ip>
    /kvmapp/system/install-kvmapp.sh /tmp/nanokvm-kvmapp-update.tar.gz
    ```
+
+**Common commands:**
 
 3. **Check currently installed version:**
    ```bash
@@ -432,6 +444,10 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
 
 6. **Run upgrade in background (async mode) - survives SSH disconnections:**
    ```bash
+   # From URL
+   /kvmapp/system/install-kvmapp.sh --async --url https://your-storage.com/nanokvm-kvmapp-update.tar.gz
+   
+   # From local file
    /kvmapp/system/install-kvmapp.sh --async --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
    ```
 
@@ -447,6 +463,7 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
 
 **What the script does:**
 - Shows "updating from X to Y" version information during installation
+- Downloads package from URL with progress display (when using --url)
 - Stops running services safely
 - Creates a timestamped backup of the current installation
 - Extracts and installs new files

@@ -28,11 +28,14 @@ VERSION_FILE="/kvmapp/version"
 DEFAULT_LOG_FILE="/tmp/kvmapp-upgrade.log"
 STATUS_FILE="/tmp/kvmapp-upgrade-status"
 OLED_MESSAGE_FILE="/tmp/kvmapp-oled-message"
+DOWNLOAD_DIR="/tmp"
 MAX_BACKUPS=3
 
 # Runtime options (can be overridden by command line)
 LOG_FILE=""
 ASYNC_MODE=0
+PACKAGE_URL=""
+LOCAL_PATH=""
 
 # Colors (may not work on all terminals)
 RED='\033[0;31m'
@@ -107,10 +110,11 @@ usage() {
     cat << EOF
 NanoKVM Installation Script
 
-Usage: $0 [OPTIONS] <tarball_path>
+Usage: $0 [OPTIONS] [tarball_path]
 
 Arguments:
   tarball_path         Path to the kvmapp update tarball (e.g., /tmp/nanokvm-kvmapp-update.tar.gz)
+                       Can be omitted if using --url to download
 
 Options:
   --help, -h           Show this help message
@@ -120,10 +124,19 @@ Options:
   --log-file <path>    Write upgrade log to specified file (default: $DEFAULT_LOG_FILE)
   --async              Run upgrade in background (async mode) - continues even if SSH disconnects
   --get-status         Check the status of an ongoing or completed upgrade
+  --url <url>          Download package from URL (shows download progress)
+  --local <path>       Use local file (same as providing path as argument)
 
 Examples:
-  # Standard upgrade (wait for completion)
+  # Download from URL and upgrade
+  $0 --url https://example.com/nanokvm-kvmapp-update.tar.gz
+
+  # Standard upgrade from local file
   $0 /tmp/nanokvm-kvmapp-update.tar.gz
+  $0 --local /tmp/nanokvm-kvmapp-update.tar.gz
+
+  # Async upgrade with URL download
+  $0 --async --url https://example.com/nanokvm-kvmapp-update.tar.gz
 
   # Upgrade with logging
   $0 --log-file /tmp/upgrade.log /tmp/nanokvm-kvmapp-update.tar.gz
@@ -142,8 +155,10 @@ Examples:
 Steps to update your NanoKVM:
   1. Build or download the kvmapp tarball
   2. Copy it to your NanoKVM: scp <tarball> root@<ip>:/tmp/
+     Or use --url to download directly on the device
   3. SSH into the device: ssh root@<ip>
   4. Run: /kvmapp/system/install-kvmapp.sh /tmp/<tarball>
+     Or: /kvmapp/system/install-kvmapp.sh --url <download_url>
 
 EOF
     exit 1
@@ -202,6 +217,67 @@ show_status() {
         echo "=== Recent Log Entries ==="
         tail -20 "$LOG_FILE"
     fi
+}
+
+# Download package from URL with progress display
+download_package() {
+    URL="$1"
+    OUTPUT_FILE="$2"
+    
+    log_info "Downloading package from: $URL"
+    write_status "Downloading package" 5
+    
+    # Remove existing file if present
+    rm -f "$OUTPUT_FILE" 2>/dev/null
+    
+    # Try wget first (preferred for progress display), then curl
+    if command -v wget > /dev/null 2>&1; then
+        log_info "Using wget for download..."
+        if [ "$ASYNC_MODE" -eq 0 ]; then
+            # Show progress bar in sync mode
+            wget --progress=bar:force -O "$OUTPUT_FILE" "$URL" 2>&1
+        else
+            # No progress bar in async mode, just log
+            wget -q -O "$OUTPUT_FILE" "$URL" 2>&1
+        fi
+        DOWNLOAD_STATUS=$?
+    elif command -v curl > /dev/null 2>&1; then
+        log_info "Using curl for download..."
+        if [ "$ASYNC_MODE" -eq 0 ]; then
+            # Show progress bar in sync mode
+            curl -L --progress-bar -o "$OUTPUT_FILE" "$URL"
+        else
+            # Silent in async mode
+            curl -sL -o "$OUTPUT_FILE" "$URL"
+        fi
+        DOWNLOAD_STATUS=$?
+    else
+        log_error "Neither wget nor curl is available for downloading"
+        write_status "FAILED: No download tool available" 100
+        exit 1
+    fi
+    
+    if [ "$DOWNLOAD_STATUS" -ne 0 ]; then
+        log_error "Download failed with status: $DOWNLOAD_STATUS"
+        write_status "FAILED: Download failed" 100
+        rm -f "$OUTPUT_FILE" 2>/dev/null
+        exit 1
+    fi
+    
+    # Verify the downloaded file exists and has content
+    if [ ! -f "$OUTPUT_FILE" ] || [ ! -s "$OUTPUT_FILE" ]; then
+        log_error "Download failed: File is empty or not created"
+        write_status "FAILED: Download produced empty file" 100
+        rm -f "$OUTPUT_FILE" 2>/dev/null
+        exit 1
+    fi
+    
+    # Get file size
+    FILE_SIZE=$(du -h "$OUTPUT_FILE" 2>/dev/null | cut -f1)
+    log_info "Download completed: $OUTPUT_FILE ($FILE_SIZE)"
+    write_status "Download completed" 10
+    
+    echo "$OUTPUT_FILE"
 }
 
 # Check if running as root
@@ -551,19 +627,46 @@ main() {
                 ASYNC_MODE=1
                 shift
                 ;;
+            --url)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: --url requires a URL argument"
+                    exit 1
+                fi
+                PACKAGE_URL="$1"
+                shift
+                ;;
+            --local)
+                shift
+                if [ -z "$1" ]; then
+                    echo "Error: --local requires a path argument"
+                    exit 1
+                fi
+                LOCAL_PATH="$1"
+                shift
+                ;;
             -*)
                 echo "Unknown option: $1"
                 usage
                 ;;
             *)
+                # Positional argument - treat as local path for backward compatibility
                 TARBALL="$1"
                 shift
                 ;;
         esac
     done
     
+    # Determine the tarball source
+    if [ -n "$PACKAGE_URL" ]; then
+        # Download from URL
+        TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
+    elif [ -n "$LOCAL_PATH" ]; then
+        TARBALL="$LOCAL_PATH"
+    fi
+    
     # If no tarball specified, show usage
-    if [ -z "$TARBALL" ]; then
+    if [ -z "$TARBALL" ] && [ -z "$PACKAGE_URL" ]; then
         usage
     fi
     
@@ -574,12 +677,21 @@ main() {
     
     check_root
     
+    # Download package if URL provided
+    if [ -n "$PACKAGE_URL" ]; then
+        init_log
+        TARBALL=$(download_package "$PACKAGE_URL" "$TARBALL")
+    fi
+    
     # Verify tarball exists
     if [ ! -f "$TARBALL" ]; then
         echo "Error: File not found: $TARBALL"
         echo ""
         echo "Make sure you've copied the tarball to the device first:"
         echo "  scp nanokvm-kvmapp-update.tar.gz root@<ip>:/tmp/"
+        echo ""
+        echo "Or use --url to download directly:"
+        echo "  $0 --url <download_url>"
         exit 1
     fi
     
@@ -593,8 +705,15 @@ main() {
         echo "  tail -f $LOG_FILE"
         echo ""
         
+        # Build the command for async execution
+        ASYNC_CMD="LOG_FILE='$LOG_FILE' ASYNC_MODE=1"
+        if [ -n "$PACKAGE_URL" ]; then
+            ASYNC_CMD="$ASYNC_CMD PACKAGE_URL='$PACKAGE_URL'"
+        fi
+        ASYNC_CMD="$ASYNC_CMD '$0' '$TARBALL'"
+        
         # Use nohup and redirect all output to log file
-        nohup sh -c "LOG_FILE='$LOG_FILE' ASYNC_MODE=1 '$0' '$TARBALL'" > /dev/null 2>&1 &
+        nohup sh -c "$ASYNC_CMD" > /dev/null 2>&1 &
         
         echo "Upgrade started in background (PID: $!)"
         exit 0
@@ -606,8 +725,16 @@ main() {
 
 # Check if we're being called as a child process for async mode
 if [ -n "$LOG_FILE" ] && [ "$ASYNC_MODE" = "1" ]; then
-    # We're the async child process, do the upgrade
-    do_upgrade "$1"
+    # We're the async child process
+    # Check if we need to download first
+    if [ -n "$PACKAGE_URL" ]; then
+        TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
+        init_log
+        TARBALL=$(download_package "$PACKAGE_URL" "$TARBALL")
+    else
+        TARBALL="$1"
+    fi
+    do_upgrade "$TARBALL"
 else
     # Normal entry point
     main "$@"
