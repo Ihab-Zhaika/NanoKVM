@@ -295,6 +295,17 @@ download_package() {
         exit 1
     fi
     
+    # Check if downloaded file is an HTML error page (common issue with Azure SAS)
+    FIRST_BYTES=$(head -c 20 "$OUTPUT_FILE" 2>/dev/null | cat -v)
+    if echo "$FIRST_BYTES" | grep -qi "<?xml\|<html\|<!DOCTYPE"; then
+        log_error "Download failed: Server returned an error page instead of the file"
+        log_error "This may indicate an expired or invalid download URL"
+        log_error "First bytes of response: $FIRST_BYTES"
+        write_status "FAILED: Server error page received" 100
+        rm -f "$OUTPUT_FILE" 2>/dev/null
+        exit 1
+    fi
+    
     # Get file size
     FILE_SIZE=$(du -h "$OUTPUT_FILE" 2>/dev/null | cut -f1)
     log_info "Download completed: $OUTPUT_FILE ($FILE_SIZE)"
@@ -462,10 +473,29 @@ install_kvmapp() {
     write_status "Extracting files" 60
     mkdir -p "$KVMAPP_DIR"
     
+    EXTRACT_STATUS=0
     if [ "$IS_ZIP" = "1" ]; then
         # Extract ZIP file
         if command -v unzip > /dev/null 2>&1; then
-            unzip -o "$PACKAGE" -d "$KVMAPP_DIR"
+            # First test the ZIP file integrity
+            if ! unzip -t "$PACKAGE" > /dev/null 2>&1; then
+                log_error "ZIP file is corrupted or invalid"
+                log_error "This may be caused by incomplete download or file transfer issues"
+                log_error "Try re-downloading the file"
+                write_status "FAILED: ZIP file corrupted" 100
+                # Restore backup if extraction fails
+                if [ -n "$KVM_SYSTEM_BACKUP" ] && [ -d "$KVM_SYSTEM_BACKUP" ]; then
+                    rm -rf "$KVM_SYSTEM_BACKUP"
+                fi
+                exit 1
+            fi
+            
+            # Extract the ZIP file
+            if ! unzip -o "$PACKAGE" -d "$KVMAPP_DIR"; then
+                log_error "Failed to extract ZIP file"
+                write_status "FAILED: ZIP extraction failed" 100
+                EXTRACT_STATUS=1
+            fi
         else
             log_error "unzip command not found, cannot extract ZIP file"
             write_status "FAILED: unzip not available" 100
@@ -473,7 +503,20 @@ install_kvmapp() {
         fi
     else
         # Extract tar.gz file
-        tar -xzf "$PACKAGE" -C "$KVMAPP_DIR"
+        if ! tar -xzf "$PACKAGE" -C "$KVMAPP_DIR"; then
+            log_error "Failed to extract tar.gz file"
+            write_status "FAILED: tar extraction failed" 100
+            EXTRACT_STATUS=1
+        fi
+    fi
+    
+    # If extraction failed, try to restore from backup
+    if [ "$EXTRACT_STATUS" != "0" ]; then
+        log_error "Extraction failed, attempting to restore from backup..."
+        if [ -n "$KVM_SYSTEM_BACKUP" ] && [ -d "$KVM_SYSTEM_BACKUP" ]; then
+            rm -rf "$KVM_SYSTEM_BACKUP"
+        fi
+        exit 1
     fi
     
     # Restore preserved kvm_system directory if it wasn't in the package
