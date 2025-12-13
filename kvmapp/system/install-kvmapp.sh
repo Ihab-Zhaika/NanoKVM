@@ -31,6 +31,10 @@ OLED_MESSAGE_FILE="/tmp/kvmapp-oled-message"
 DOWNLOAD_DIR="/tmp"
 MAX_BACKUPS=3
 
+# Default package URL (set during build, leave empty for manual mode)
+# This URL will be automatically configured when the script is part of a build artifact
+DEFAULT_PACKAGE_URL=""
+
 # Runtime options (can be overridden by command line)
 LOG_FILE=""
 ASYNC_MODE=0
@@ -659,13 +663,18 @@ main() {
     
     # Determine the tarball source
     if [ -n "$PACKAGE_URL" ]; then
-        # Download from URL
+        # Download from URL specified via --url
         TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
     elif [ -n "$LOCAL_PATH" ]; then
         TARBALL="$LOCAL_PATH"
+    elif [ -z "$TARBALL" ] && [ -n "$DEFAULT_PACKAGE_URL" ]; then
+        # Use default URL if no tarball specified and default URL is configured
+        PACKAGE_URL="$DEFAULT_PACKAGE_URL"
+        TARBALL="${DOWNLOAD_DIR}/nanokvm-kvmapp-update-$(date +%Y%m%d%H%M%S).tar.gz"
+        echo "Using pre-configured download URL..."
     fi
     
-    # If no tarball specified, show usage
+    # If no tarball specified and no default URL, show usage
     if [ -z "$TARBALL" ] && [ -z "$PACKAGE_URL" ]; then
         usage
     fi

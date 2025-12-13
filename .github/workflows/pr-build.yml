@@ -338,6 +338,41 @@ jobs:
           echo "Packages created:"
           ls -la *.tar.gz
 
+      - name: Generate pre-configured install script
+        env:
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          echo "Generating pre-configured install script..."
+          
+          # Determine the download URL based on Azure Storage settings
+          CONTAINER="${AZURE_STORAGE_CONTAINER:-nanokvm-builds}"
+          VERSION="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          BRANCH_NAME="${{ github.ref_name }}"
+          
+          # The URL pattern - users need to replace <storage-account> with actual storage account name
+          # For now, we'll use a placeholder that can be configured
+          DOWNLOAD_URL="https://\${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER}/${BRANCH_NAME}/${VERSION}/nanokvm-kvmapp-update.tar.gz"
+          
+          # Copy the install script and configure it with the download URL
+          mkdir -p output/scripts
+          cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp.sh
+          
+          # Replace the empty DEFAULT_PACKAGE_URL with the actual URL
+          # Using sed to update the placeholder
+          sed -i "s|^DEFAULT_PACKAGE_URL=\"\"|DEFAULT_PACKAGE_URL=\"${DOWNLOAD_URL}\"|" output/scripts/install-kvmapp.sh
+          
+          # Also create a version without the URL (for manual use)
+          cp kvmapp/system/install-kvmapp.sh output/scripts/install-kvmapp-manual.sh
+          
+          echo "Install scripts generated:"
+          echo "  - install-kvmapp.sh (pre-configured with download URL)"
+          echo "  - install-kvmapp-manual.sh (requires --url or local file)"
+          
+          # Show the configured URL in the script
+          grep "DEFAULT_PACKAGE_URL" output/scripts/install-kvmapp.sh
+          
+          chmod +x output/scripts/*.sh
+
       - name: List build artifacts
         run: |
           echo "Build output:"
@@ -345,12 +380,17 @@ jobs:
           echo ""
           echo "Packages:"
           ls -la output/*.tar.gz || true
+          echo ""
+          echo "Scripts:"
+          ls -la output/scripts/ || true
 
       - name: Upload kvmapp update package
         uses: actions/upload-artifact@v4
         with:
           name: nanokvm-kvmapp-${{ github.sha }}
-          path: output/nanokvm-kvmapp-update.tar.gz
+          path: |
+            output/nanokvm-kvmapp-update.tar.gz
+            output/scripts/
           if-no-files-found: error
 
       - name: Upload build artifacts
@@ -361,6 +401,7 @@ jobs:
             output/nanokvm-artifacts.tar.gz
             output/kvmapp/
             output/tools/
+            output/scripts/
           if-no-files-found: error
 
       - name: Upload artifacts to Azure Storage
@@ -402,8 +443,30 @@ jobs:
             --file output/nanokvm-artifacts.tar.gz \
             --overwrite
           
+          # Upload install scripts
+          if [ -d "output/scripts" ]; then
+            echo "Uploading install scripts..."
+            for script in output/scripts/*.sh; do
+              if [ -f "$script" ]; then
+                SCRIPT_NAME=$(basename "$script")
+                az storage blob upload \
+                  --container-name "$CONTAINER" \
+                  --name "${UPLOAD_PATH}/${SCRIPT_NAME}" \
+                  --file "$script" \
+                  --overwrite
+                echo "Uploaded: ${SCRIPT_NAME}"
+              fi
+            done
+          fi
+          
+          echo ""
           echo "Artifacts uploaded successfully to Azure Storage"
           echo "Download URL pattern: https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/"
+          echo ""
+          echo "To upgrade your NanoKVM, download and run the install script:"
+          echo "  wget https://<storage-account>.blob.core.windows.net/$CONTAINER/${UPLOAD_PATH}/install-kvmapp.sh"
+          echo "  chmod +x install-kvmapp.sh"
+          echo "  ./install-kvmapp.sh"
 
   build-os-image:
     name: Build flashable OS image (existing base)

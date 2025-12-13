@@ -473,7 +473,36 @@ For manual installation via SSH, use the `install-kvmapp.sh` script. This is the
 - Supports async mode for SSH-disconnect-safe upgrades
 - Writes progress to log file for monitoring
 
-### Testing PR Builds on NanoKVM
+### Using Build Artifacts with Pre-configured Scripts
+
+When the CI builds artifacts, it generates pre-configured install scripts that include the download URL. This means you can upgrade without specifying any parameters:
+
+1. **Download the pre-configured install script from the build artifacts:**
+   - Go to the PR's "Checks" tab and find the workflow run
+   - Download the `nanokvm-kvmapp-{sha}` artifact (includes `scripts/install-kvmapp.sh`)
+   - Or download directly from Azure Storage if configured
+
+2. **Copy and run the script on your NanoKVM:**
+   ```bash
+   # Copy the pre-configured script to your NanoKVM
+   scp install-kvmapp.sh root@<nanokvm-ip>:/tmp/
+   
+   # SSH into your NanoKVM and run (no parameters needed!)
+   ssh root@<nanokvm-ip>
+   chmod +x /tmp/install-kvmapp.sh
+   /tmp/install-kvmapp.sh
+   ```
+
+3. **Or use async mode for long-running upgrades:**
+   ```bash
+   /tmp/install-kvmapp.sh --async
+   # Then check status with:
+   /tmp/install-kvmapp.sh --get-status
+   ```
+
+The pre-configured script automatically downloads the matching package from the build artifacts storage.
+
+### Testing PR Builds on NanoKVM (Manual Method)
 
 When you have a pull request, the CI builds artifacts that can be tested directly on your NanoKVM device. Use the `upgrade-from-pr.sh` script for safe upgrades:
 
