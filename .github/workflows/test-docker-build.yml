@@ -110,7 +110,8 @@ jobs:
             grep -q "CONFIG_USB_CONFIGFS_F_UAC2=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
             grep -q "CONFIG_USB_F_UAC2=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
             grep -q "CONFIG_SND_USB_AUDIO=m" board/sipeed/nanokvm/linux-uac2.config || exit 1
-            grep -q "CONFIG_ALSA" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_SOUND=y" board/sipeed/nanokvm/linux-uac2.config || exit 1
+            grep -q "CONFIG_SND=y" board/sipeed/nanokvm/linux-uac2.config || exit 1
             
             echo "✓ Kernel config fragment is valid"
           else
