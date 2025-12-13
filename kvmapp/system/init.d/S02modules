@@ -1,0 +1,25 @@
+#!/bin/sh
+# Load required kernel modules for NanoKVM
+
+case "$1" in
+  start)
+    echo "Loading NanoKVM kernel modules..."
+    
+    # Load UAC2 module if available
+    if [ -f /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/function/usb_f_uac2.ko ]; then
+        modprobe usb_f_uac2 && echo "UAC2 module loaded"  || echo "Failed to load UAC2"
+    else
+        echo "WARNING: UAC2 module not found - virtual audio disabled"
+    fi
+    
+    # Load other USB gadget functions as needed
+    modprobe libcomposite 2>/dev/null || true
+    ;;
+  stop)
+    rmmod usb_f_uac2 2>/dev/null || true
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+esac

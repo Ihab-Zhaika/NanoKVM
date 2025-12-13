@@ -351,6 +351,13 @@ jobs:
           BR2_PACKAGE_NANO=y
           BR2_PACKAGE_HTOP=y
           BR2_PACKAGE_CURL=y
+          
+          # USB Audio (UAC2) support for virtual audio
+          BR2_PACKAGE_ALSA_LIB=y
+          BR2_PACKAGE_ALSA_LIB_MIXER=y
+          BR2_PACKAGE_ALSA_LIB_PCM=y
+          BR2_PACKAGE_ALSA_UTILS=y
+          BR2_PACKAGE_ALSA_UTILS_AMIXER=y
           EOF
           
           # Add custom packages if specified
@@ -364,6 +371,47 @@ jobs:
           
           echo "Buildroot config fragment:"
           cat buildroot-config-fragment
+          
+          # Create kernel config fragment for UAC2 support
+          mkdir -p board/sipeed/nanokvm
+          cat > board/sipeed/nanokvm/linux-uac2.config << 'EOF'
+          # USB Audio Class 2.0 Gadget Support
+          CONFIG_USB_CONFIGFS_F_UAC2=m
+          CONFIG_USB_F_UAC2=m
+          
+          # ALSA/Sound support
+          CONFIG_SOUND=y
+          CONFIG_SND=y
+          CONFIG_SND_PCM=y
+          CONFIG_SND_HWDEP=y
+          CONFIG_SND_RAWMIDI=y
+          CONFIG_SND_SEQUENCER=y
+          CONFIG_SND_SEQ_DUMMY=y
+          CONFIG_SND_OSSEMUL=y
+          CONFIG_SND_MIXER_OSS=y
+          CONFIG_SND_PCM_OSS=y
+          CONFIG_SND_PCM_OSS_PLUGINS=y
+          
+          # USB Audio support
+          CONFIG_SND_USB=y
+          CONFIG_SND_USB_AUDIO=m
+          
+          # USB Gadget configfs support
+          CONFIG_USB_CONFIGFS=y
+          CONFIG_USB_CONFIGFS_F_FS=y
+          CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+          CONFIG_USB_CONFIGFS_F_HID=y
+          CONFIG_USB_CONFIGFS_F_UAC2=m
+          
+          # Ensure gadget support
+          CONFIG_USB_GADGET=y
+          CONFIG_USB_GADGET_VBUS_DRAW=500
+          CONFIG_USB_CONFIGFS=y
+          CONFIG_USB_LIBCOMPOSITE=y
+          EOF
+          
+          echo "Kernel config fragment for UAC2:"
+          cat board/sipeed/nanokvm/linux-uac2.config
 
       - name: Build OS image with Buildroot
         env:
@@ -381,6 +429,16 @@ jobs:
           # Apply custom configuration
           if [ -f /workspace/buildroot-config-fragment ]; then
             cat /workspace/buildroot-config-fragment >> buildroot/configs/licheervnano_defconfig || true
+          fi
+          
+          # Apply kernel config fragment for UAC2 support
+          if [ -f /workspace/board/sipeed/nanokvm/linux-uac2.config ]; then
+            echo "Applying kernel UAC2 configuration fragment..."
+            mkdir -p buildroot/board/sipeed/nanokvm
+            cp /workspace/board/sipeed/nanokvm/linux-uac2.config buildroot/board/sipeed/nanokvm/
+            
+            # Add kernel fragment to buildroot config
+            echo 'BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL)/board/sipeed/nanokvm/linux-uac2.config"' >> buildroot/configs/licheervnano_defconfig || true
           fi
           
           # Build the image

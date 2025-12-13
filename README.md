@@ -98,6 +98,47 @@ Note: Out of the 256MB memory in SG2002, 158MB is currently allocated for the mu
   <img src="https://wiki.sipeed.com/hardware/zh/kvm/assets/NanoKVM/1_intro/NanoKVM_2.jpg" alt="NanoKVM PCB Pinout" width="80%" style="margin: 20px 0;">
 </div>
 
+## 🎵 Virtual Audio Requirements
+
+The virtual audio feature allows audio streaming between NanoKVM and the remote host computer. To use this feature, the following requirements must be met:
+
+### System Requirements
+
+- **Kernel**: Version 5.10.4+ with UAC2 support
+- **Kernel Module**: `usb_f_uac2.ko` must be present
+- **Kernel Config**: `CONFIG_USB_CONFIGFS_F_UAC2=m` enabled
+- **ALSA Utilities**: `amixer` and ALSA libraries installed
+
+### Quick Verification
+
+Check if your system supports virtual audio:
+
+```bash
+# Check if UAC2 module exists
+ls /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/function/usb_f_uac2.ko
+
+# Check if module is loaded
+lsmod | grep uac2
+
+# Check USB audio devices
+ls /sys/kernel/config/usb_gadget/g0/functions/ | grep uac2
+```
+
+### Enabling Virtual Audio
+
+```bash
+# Enable audio input (microphone)
+touch /boot/usb.audio_in
+
+# Enable audio output (speaker)
+touch /boot/usb.audio_out
+
+# Restart USB gadget
+/etc/init.d/S03usbdev stop_start
+```
+
+For detailed setup instructions and troubleshooting, see [Virtual Audio Setup Guide](docs/VIRTUAL_AUDIO.md).
+
 ## 🤝 Contributing
 
 We welcome contributions! Here's how you can help:
