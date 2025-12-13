@@ -287,20 +287,25 @@ jobs:
             fi
           fi
           
-          # Copy frontend
+          # Copy frontend - must be at /kvmapp/server/web/ for the Go server
           if [ -d "web/dist" ]; then
             mkdir -p "$KVMAPP_DIR/server/web"
             cp -r web/dist/* "$KVMAPP_DIR/server/web/"
+            echo "Copied web frontend to server/web/"
           fi
           
-          # Copy server binary
+          # Copy server binary - must be at /kvmapp/server/NanoKVM-Server
+          # The S95nanokvm script copies /kvmapp/server to /tmp/server and runs from there
           if [ -f "server/NanoKVM-Server" ]; then
-            cp server/NanoKVM-Server "$KVMAPP_DIR/"
+            mkdir -p "$KVMAPP_DIR/server"
+            cp server/NanoKVM-Server "$KVMAPP_DIR/server/"
+            echo "Copied NanoKVM-Server to server/"
           fi
           
           # Copy dynamic libraries if they exist
           if [ -d "server/dl_lib" ]; then
             cp -r server/dl_lib "$KVMAPP_DIR/"
+            echo "Copied dl_lib/"
           fi
           
           # Copy system files from support/system if they exist (legacy path)
@@ -317,6 +322,14 @@ jobs:
           echo "kvmapp packaged successfully"
           echo "Contents of kvmapp:"
           ls -la "$KVMAPP_DIR/"
+          if [ -d "$KVMAPP_DIR/server" ]; then
+            echo "Contents of kvmapp/server:"
+            ls -la "$KVMAPP_DIR/server/"
+          fi
+          if [ -d "$KVMAPP_DIR/kvm_system" ]; then
+            echo "Contents of kvmapp/kvm_system:"
+            ls -la "$KVMAPP_DIR/kvm_system/"
+          fi
           if [ -d "$KVMAPP_DIR/system" ]; then
             echo "Contents of kvmapp/system:"
             ls -la "$KVMAPP_DIR/system/"
