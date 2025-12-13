@@ -442,6 +442,15 @@ install_kvmapp() {
         exit 1
     fi
     
+    # Preserve kvm_system directory if it exists (it's not included in update packages)
+    # The kvm_system binary requires cross-compilation and is pre-installed on the device
+    KVM_SYSTEM_BACKUP=""
+    if [ -d "$KVMAPP_DIR/kvm_system" ]; then
+        log_info "Preserving existing kvm_system directory..."
+        KVM_SYSTEM_BACKUP="/tmp/kvm_system_preserve_$$"
+        cp -a "$KVMAPP_DIR/kvm_system" "$KVM_SYSTEM_BACKUP"
+    fi
+    
     # Remove old kvmapp
     if [ -d "$KVMAPP_DIR" ]; then
         log_info "Removing old installation..."
@@ -465,6 +474,17 @@ install_kvmapp() {
     else
         # Extract tar.gz file
         tar -xzf "$PACKAGE" -C "$KVMAPP_DIR"
+    fi
+    
+    # Restore preserved kvm_system directory if it wasn't in the package
+    if [ -n "$KVM_SYSTEM_BACKUP" ] && [ -d "$KVM_SYSTEM_BACKUP" ]; then
+        if [ ! -d "$KVMAPP_DIR/kvm_system" ] || [ ! -f "$KVMAPP_DIR/kvm_system/kvm_system" ]; then
+            log_info "Restoring preserved kvm_system directory..."
+            rm -rf "$KVMAPP_DIR/kvm_system" 2>/dev/null
+            mv "$KVM_SYSTEM_BACKUP" "$KVMAPP_DIR/kvm_system"
+        else
+            rm -rf "$KVM_SYSTEM_BACKUP"
+        fi
     fi
     
     log_info "Files extracted successfully"

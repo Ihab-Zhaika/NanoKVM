@@ -268,11 +268,13 @@ jobs:
           if [ -d "kvmapp" ]; then
             echo "Copying essential kvmapp system files..."
             
-            # Copy kvm_system directory (contains kvm_stream binary for screen output)
-            if [ -d "kvmapp/kvm_system" ]; then
-              cp -r kvmapp/kvm_system "$KVMAPP_DIR/"
-              echo "Copied kvm_system/"
-            fi
+            # NOTE: kvm_system directory contains placeholder files only
+            # The actual kvm_system binary must be cross-compiled separately
+            # We skip copying it to avoid overwriting working binaries on the device
+            # if [ -d "kvmapp/kvm_system" ]; then
+            #   cp -r kvmapp/kvm_system "$KVMAPP_DIR/"
+            #   echo "Copied kvm_system/"
+            # fi
             
             # Copy system directory (contains init scripts and kernel modules)
             if [ -d "kvmapp/system" ]; then
@@ -304,8 +306,9 @@ jobs:
           
           # Copy dynamic libraries if they exist
           if [ -d "server/dl_lib" ]; then
-            cp -r server/dl_lib "$KVMAPP_DIR/"
-            echo "Copied dl_lib/"
+            mkdir -p "$KVMAPP_DIR/server"
+            cp -r server/dl_lib "$KVMAPP_DIR/server/"
+            echo "Copied dl_lib/ to server/"
           fi
           
           # Copy system files from support/system if they exist (legacy path)
