@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y \
     dosfstools \
     ca-certificates \
     gnupg \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
